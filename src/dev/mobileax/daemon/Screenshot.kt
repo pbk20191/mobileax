@@ -16,7 +16,6 @@ import android.media.Image
 import android.media.ImageReader
 import android.os.Build
 import android.view.Display
-import dev.mobileax.daemon.Binders.systemContext
 import dev.mobileax.daemon.Loop.mainHandler
 import java.io.BufferedReader
 import java.io.ByteArrayOutputStream
@@ -518,35 +517,14 @@ internal class Screenshot(private val ua: UiAutomation) {
 
         @Throws(Exception::class)
         private fun initDisplayManager(): DisplayManager? {
-//        if (android.os.Looper.getMainLooper() == null) {
-//            android.os.Looper.prepareMainLooper();
-//        }
-//        Class<?> atCls = Class.forName("android.app.ActivityThread");
-//        Object atInst = atCls.getMethod("systemMain").invoke(null);
-            val sysCtx = systemContext()
             // Android 14+ rejects createVirtualDisplay when the Context's
-            // op-package name doesn't map to the calling UID. The system
-            // Context's package is "android" but we run as shell UID (2000),
-            // so the check fails with:
-            //   SecurityException: packageName must match the calling uid
-            // Three-tier strategy:
-            //  1. createPackageContext("com.android.shell", 0) — usually
-            //     returns a context whose getOpPackageName() is the shell
-            //     package, which matches shell UID.
-            //  2. If that didn't change getOpPackageName(), wrap the result
-            //     to force the override (DisplayManagerGlobal reads
-            //     context.getOpPackageName() to populate the system request).
-            //  3. If createPackageContext threw, wrap the system context.
-            var base = sysCtx
-            var chosen: String?
-            try {
-                base = sysCtx!!.createPackageContext("com.android.shell", 0)
-                chosen = "com.android.shell (pkg-ctx)"
-            } catch (t: Throwable) {
-                Logx.w("screenshot: createPackageContext(com.android.shell) failed", t)
-                chosen = "com.android.shell (wrapped sysCtx)"
-            }
-            if ("com.android.shell" != base!!.opPackageName) {
+            // op-package name doesn't map to the calling UID ("packageName
+            // must match the calling uid"). The daemon's Application is
+            // com.android.shell, our uid's package; only if building it failed
+            // (the system context, "android") is the name forced here.
+            var base = Binders.appContext()
+            var chosen = "app context"
+            if ("com.android.shell" != base.opPackageName) {
                 val inner = base
                 base = object : ContextWrapper(inner) {
                     override fun getPackageName(): String {

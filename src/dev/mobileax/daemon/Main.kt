@@ -29,13 +29,20 @@ data object Main {
 
         try {
             disableHiddenApiRestrictions()
+            initLikeActivityThreadMain()
             // app_process has no ActivityThread to prepare the main looper for us.
             @Suppress("DEPRECATION")
             if (Looper.getMainLooper() == null) Looper.prepareMainLooper()
+            logSlowMainLooper()
             Loop.init()
             // ActivityThread.systemMain() binds handlers to the calling thread's
             // looper, so the system context must be created here, on main.
-            val sysCtx = Binders.systemContext()!!
+            Binders.systemContext()
+            // systemMain() names us "system_process" to the debugger.
+            setDdmAppName("mobaxd")
+            // Everything below runs as this: com.android.shell, our uid's package.
+            val ctx = Binders.appContext()
+            Logx.boot("mobaxd context=${ctx.opPackageName}")
 
             val ready = CompletableDeferred<Server>()
             lateinit var server: MobaxServer
@@ -43,7 +50,7 @@ data object Main {
             server.start()
             Loop.scope.launch {
                 try {
-                    ready.complete(initDaemon(sysCtx))
+                    ready.complete(initDaemon(ctx))
                     Logx.boot("mobaxd ready (sdk=${android.os.Build.VERSION.SDK_INT})")
                 } catch (t: Throwable) {
                     Logx.fatal("init failed", t)
@@ -57,7 +64,7 @@ data object Main {
         }
     }
 
-    private suspend fun initDaemon(sysCtx: Context): Server = withContext(Loop.Work) {
+    private suspend fun initDaemon(context: Context): Server = withContext(Loop.Work) {
         val ua = try {
             connectedUiAutomation(Looper.getMainLooper()).also { Logx.boot("mobaxd ua-looper=main") }
         } catch (t: Throwable) {
@@ -73,21 +80,21 @@ data object Main {
         h.dumper = Dumper(ua)
         h.shot = Screenshot(ua).also { it.probeMirror() }
         h.input = Input(ua)
-        h.sysCtx = sysCtx
-        h.installer = Installer(sysCtx)
-        h.pm = Pm(sysCtx)
-        h.manifest = Manifest(sysCtx)
+        h.sysCtx = context
+        h.installer = Installer(context)
+        h.pm = Pm(context)
+        h.manifest = Manifest(context)
         h.providers = Providers()
         h.location = Location()
         h.notifs = Notifications()
         h.clip = Clipboard()
-        h.am = Am(sysCtx)
+        h.am = Am(context)
         try { h.props = Props() } catch (t: Throwable) { Logx.bootWarn("Props init failed", t) }
-        h.settings = SettingsApi(sysCtx)
-        h.wm = Wm(sysCtx.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager)
+        h.settings = SettingsApi(context)
+        h.wm = Wm(context.getSystemService(DisplayManager::class.java))
         h.uiEvents = UiEvents(ua)
         h.nodes = NodeActions(ua)
-        h.state = State(sysCtx, h.uiEvents)
+        h.state = State(context, h.uiEvents)
 
         // Warm the dump path: the first dump_active on a cold VM costs ~1 s.
         Loop.scope.launch(Loop.Work) {
@@ -172,6 +179,58 @@ data object Main {
             } catch (_: Throwable) {
             }
         }, "mobax-shutdown"))
+    }
+
+    /**
+     * What `ActivityThread.main()` / `SystemServer.run()` set up that
+     * app_process skips and we want: Bundles from other processes defused
+     * (an unknown Parcelable reads as empty instead of throwing), and the
+     * mainline modules' service managers, without which getSystemService()
+     * for telephony, bluetooth, media session, stats … throws.
+     */
+    private fun initLikeActivityThreadMain() {
+        try {
+            Class.forName("android.os.BaseBundle")
+                .getMethod("setShouldDefuse", Boolean::class.javaPrimitiveType).invoke(null, true)
+        } catch (t: Throwable) {
+            Logx.bootWarn("BaseBundle.setShouldDefuse failed", t)
+        }
+        if (android.os.Build.VERSION.SDK_INT < 30) return   // added in R
+        try {
+            Class.forName("android.app.ActivityThread").getDeclaredMethod("initializeMainlineModules")
+                .apply { isAccessible = true }.invoke(null)
+        } catch (t: Throwable) {
+            Logx.bootWarn("initializeMainlineModules failed", t)
+        }
+    }
+
+    /**
+     * UiAutomation's callbacks run on the main looper: a message dispatched
+     * over 100 ms, or delivered over 200 ms late, gets a logcat line (as in
+     * system_server), so "events arrive late" has a culprit.
+     */
+    private fun logSlowMainLooper() {
+        try {
+            Looper::class.java.getMethod("setSlowLogThresholdMs", Long::class.javaPrimitiveType, Long::class.javaPrimitiveType)
+                .invoke(Looper.getMainLooper(), 100L, 200L)
+        } catch (t: Throwable) {
+            Logx.bootWarn("Looper.setSlowLogThresholdMs failed", t)
+        }
+    }
+
+    /** Our name in the debugger's process list; the signature varies by SDK. */
+    private fun setDdmAppName(name: String) {
+        try {
+            val ddm = Class.forName("android.ddm.DdmHandleAppName")
+            val s = String::class.java
+            val i = Int::class.javaPrimitiveType
+            val m = ddm.declaredMethods.filter { it.name == "setAppName" }
+            m.find { it.parameterTypes.contentEquals(arrayOf(s, s, i)) }?.let { it.invoke(null, name, name, 0); return }
+            m.find { it.parameterTypes.contentEquals(arrayOf(s, i)) }?.let { it.invoke(null, name, 0); return }
+            m.find { it.parameterTypes.contentEquals(arrayOf(s)) }?.invoke(null, name)
+        } catch (t: Throwable) {
+            Logx.bootWarn("DdmHandleAppName.setAppName failed", t)
+        }
     }
 
     private fun disableHiddenApiRestrictions() {
