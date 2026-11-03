@@ -50,7 +50,7 @@ internal object Shell {
             val at = text.lastIndexOf(EXIT_MARK)
             if (at < 0) { errText = text; return@withContext -1 }
             errText = text.substring(0, at)
-            text.substring(at + EXIT_MARK.length).trim().toIntOrNull() ?: -1
+            text.substring(at + EXIT_MARK.length).substringBefore('\n').trim().toIntOrNull() ?: -1
         }
 
         val errOutput: String get() = errText
@@ -81,7 +81,12 @@ internal object Shell {
     fun open(cmd: String, mergeErr: Boolean = false, keepStdin: Boolean = false): ShellProc {
         val (out, inp, errFd) = ua.executeShellCommandRwe("sh")
         val body = if (mergeErr) "{ $cmd\n} 2>&1" else cmd
-        val script = "echo $PID_MARK\$\$ >&2\n$body\necho $EXIT_MARK\$? >&2\n".toByteArray(Charsets.UTF_8)
+        // sh reads its script line by line, so with keepStdin the command
+        // must sit on one line: whatever follows it on stdin is its input.
+        // The trailing exit keeps sh from running that input as script when
+        // the command stops early (a missing directory, say).
+        val script = (if (keepStdin) "echo $PID_MARK\$\$ >&2; $body; echo $EXIT_MARK\$? >&2; exit\n"
+            else "echo $PID_MARK\$\$ >&2\n$body\necho $EXIT_MARK\$? >&2\n").toByteArray(Charsets.UTF_8)
         if (!keepStdin) {
             ParcelFileDescriptor.AutoCloseOutputStream(inp).use { it.write(script) }
         } else {

@@ -349,9 +349,18 @@ fn do_pull(conn: &mut Conn, device: &str, host: Option<&str>) -> io::Result<()> 
     let written = match host {
         Some(p) => {
             let mut f = File::create(p)?;
-            let n = conn.recv_chunks_to(&mut f)?;
-            f.flush()?;
-            n
+            let got = conn.recv_chunks_to(&mut f).and_then(|n| f.flush().map(|_| n));
+            match got {
+                Ok(n) => n,
+                Err(e) => {
+                    // Refused before any bytes (missing, unreadable): no empty file.
+                    drop(f);
+                    if std::fs::metadata(p).is_ok_and(|m| m.len() == 0) {
+                        let _ = std::fs::remove_file(p);
+                    }
+                    return Err(e);
+                }
+            }
         }
         None => {
             let mut out = crate::output::stdout();
@@ -395,4 +404,40 @@ fn do_install(conn: &mut Conn, apk: &str, reinstall: bool, grant: bool) -> io::R
     out.write_all(&reply)?;
     out.write_all(b"\n")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    /// A daemon that answers any command with `ERR:<msg>` as a chunk stream.
+    fn refusing_daemon(msg: &'static str) -> u16 {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let (mut s, _) = l.accept().unwrap();
+            let mut hdr = [0u8; 4];
+            s.read_exact(&mut hdr).unwrap();
+            let mut cmd = vec![0u8; u32::from_be_bytes(hdr) as usize];
+            s.read_exact(&mut cmd).unwrap();
+            s.write_all(&(msg.len() as u32).to_be_bytes()).unwrap();
+            s.write_all(msg.as_bytes()).unwrap();
+            s.write_all(&0u32.to_be_bytes()).unwrap();
+        });
+        port
+    }
+
+    #[test]
+    fn a_pull_the_device_refuses_leaves_no_file() {
+        let port = refusing_daemon("ERR:read-failed:cat: /system/build.prop: Permission denied");
+        let dir = std::env::temp_dir().join(format!("mobax-pull-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dst = dir.join("build.prop");
+        let mut conn = crate::Conn::tcp("127.0.0.1", port).unwrap();
+        let e = super::do_pull(&mut conn, "/system/build.prop", Some(dst.to_str().unwrap())).unwrap_err();
+        assert!(e.to_string().contains("Permission denied"), "{e}");
+        assert!(!dst.exists(), "an empty {} was left behind", dst.display());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
