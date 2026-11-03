@@ -682,3 +682,22 @@ Expected: 실행 성공, 자산 20개.
 - 성능 비교
 - 스파이크 결과
 - 남은 위험
+
+---
+
+## 스파이크 결과 (Task 1, 2026-11-03, 에뮬레이터 `Medium_Phone` SDK 36)
+
+androidx.test 버전: `runner 1.7.0`, `monitor 1.8.0`, `uiautomator 2.4.0` (구현 시점 최신 안정판). 스파이크 프로세스는 uid 10217(앱)로 돌았다.
+
+| 확인 | 결과 |
+|---|---|
+| 1. 앱 uid의 abstract 소켓 도달 (중단 조건) | **통과.** `adb forward tcp:… localabstract:mobaxd_spike`와 adb server 경로(`host:transport:` + `localabstract:`) 모두 `pong` |
+| 2. monkey 켜기·끄기 (중단 조건) | **통과.** `setRunAsMonkey(true)` → `isUserAMonkey=true`. `am force-stop` 후 재실행 시 `false`. 일부러 크래시(`Process crashed.`)시킨 뒤 재실행도 `false`. 둘 다 `am instrument` 프로세스가 같이 끝났고 남은 프로세스 없음 |
+| 3. 3-arg `injectInputEvent(ev, false, false)` | **통과.** down/up 모두 `true` |
+| 4. adopt 아래 권한 작업 | **통과.** `AUTO_MIRROR` 가상 디스플레이 생성, `Settings.Global.putInt`, `content://sms` 쿼리, PackageInstaller 세션 생성·폐기, `ClipboardManager` 쓰기·읽기 |
+| 5. shell 실행의 stderr·종료 코드 | **통과(방식 변경).** `executeShellCommand*`는 명령을 공백으로만 자르고 따옴표를 처리하지 않는다(`sh -c '…'` → `no closing quote`). `executeShellCommandRwe("sh")`를 띄우고 스크립트를 stdin으로 넣으면 uid 2000(shell), 따옴표 정상, `__MOBAX_EXIT:1`/`:0` 수신 |
+| 클립보드 | **통과.** adopt 아래 `ClipboardManager`로 읽기·쓰기 됨. `cmd clipboard`도 존재(`cmd -l`) |
+| 6. `UiDevice`와 같은 UiAutomation | **통과.** `Configurator.uiAutomationFlags = 1` 후 `UiDevice.getInstance()`를 써도 `getUiAutomation(1)`이 같은 인스턴스(`same=true`) |
+| 7. `start()` 없이 5분 생존 | **통과.** 300초 후에도 프로세스와 `am instrument`가 살아 있고 소켓이 `pong` |
+
+계획에 반영할 점: Task 3의 `Shell.open`은 `sh -c` 대신 stdin 스크립트 방식으로 한다(ledger의 Task 1 Ruling).
