@@ -123,12 +123,12 @@ internal class Transfers(private val ctx: Context, private val installer: Instal
         val dirCheck = if (parent != null) "[ -d ${Shell.quote(parent)} ] || exit $NOT_FOUND; " else ""
         val chmod = if (mode > 0) " && chmod ${Integer.toOctalString(mode)} $q" else ""
         val p = try {
-            withContext(Loop.Blocking) { Shell.open("( ${dirCheck}cat > $q$chmod )", keepStdin = true) }
+            withContext(Loop.Blocking) { Shell.open("( ${dirCheck}cat > $q$chmod )", input = Shell.Input.DATA) }
         } catch (e: Exception) {
             c.drainChunks()
             return err("write-failed:${e.message}")
         }
-        val sink = ParcelFileDescriptor.AutoCloseOutputStream(p.stdin!!)
+        val sink = p.stdin!!
         var received = 0L
         var writeErr: IOException? = null
         try {

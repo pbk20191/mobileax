@@ -44,7 +44,7 @@
 
 ## 3. 제약
 
-- **minSdk 31** (사용자 결정). `adoptShellPermissionIdentity()`(29+)와 `executeShellCommandRw`/`Rwe`(31+, `cp` 업로드의 표준 입력과 `shell`의 표준 에러·종료 코드에 필요)가 모두 공개 API로 있는 버전이다. 29~30용 갈래 코드는 쓰지 않는다. 검증할 기기가 SDK 36 에뮬레이터뿐이라, 그 갈래는 검증 없이 배포될 것이기 때문이다.
+- **minSdk 29** (사용자 결정, 2026-11-03 갱신; 처음엔 31). `executeShellCommandRwe`가 공개 API인 건 SDK 34부터이고 31~33에서는 `@hide @TestApi`라서, shell 실행을 두 갈래로 나눴다(3안): SDK 34+는 Rwe, 29~33은 앱 외부 저장소의 파일과 `executeShellCommand`. 29가 바닥인 이유는 `adoptShellPermissionIdentity`가 29부터이기 때문이다. 검증은 SDK 36과 임시 SDK 29 AVD에서 했다. 아래는 처음 결정의 기록이다: `adoptShellPermissionIdentity()`(29+)와 `executeShellCommandRw`/`Rwe`(31+, `cp` 업로드의 표준 입력과 `shell`의 표준 에러·종료 코드에 필요)가 모두 공개 API로 있는 버전이다. 29~30용 갈래 코드는 쓰지 않는다. 검증할 기기가 SDK 36 에뮬레이터뿐이라, 그 갈래는 검증 없이 배포될 것이기 때문이다.
 - **UiAutomation은 기기당 하나만 연결된다.** 사용자의 UiAutomator 테스트와 동시에 쓸 수 없다. 이건 지금도 같다.
 - **`am instrument -w` 프로세스가 살아 있어야 한다.** `UiAutomationConnection`이 이 shell 프로세스 안에 있어서, 이게 죽으면 UiAutomation도 죽는다. `nohup … &`로 분리해 띄운다. 지금의 `app_process` 기동 방식과 같다.
 - **데몬은 앱 uid로 돈다.**

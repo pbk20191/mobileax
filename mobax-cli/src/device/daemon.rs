@@ -317,20 +317,30 @@ pub(crate) fn connect(opts: &ConnectOpts) -> io::Result<(String, u16)> {
     adb_ok(Some(&serial), &["shell", &format!("echo {port} > {DEVICE_PORT}")], "record port")?;
     adb_ok(Some(&serial), &["shell", &install::instrument_cmd(port, DEVICE_LOG)], "start daemon")?;
 
-    // Wait until the daemon answers `ping` (each probe is a few ms through
-    // the adb server).
-    let deadline = Instant::now() + Duration::from_secs(6);
+    // Wait until the daemon answers `ready`: its socket answers `ping` before
+    // UiAutomation is connected, and that connect can fail (another
+    // UiAutomation holds it) up to the framework's 5 s timeout later. Stop
+    // early once the log shows the instrumentation is over.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut last_log_check = Instant::now();
     while Instant::now() < deadline {
         if ping_daemon(&serial, port).is_ok() {
-            write_current(&serial);
-            let _ = state_cache::spawn_detached(&serial, port);
-            return Ok((serial, port));
+            if ask_daemon(&serial, port, b"ready", b"ready", deadline.saturating_duration_since(Instant::now())).is_ok() {
+                write_current(&serial);
+                let _ = state_cache::spawn_detached(&serial, port);
+                return Ok((serial, port));
+            }
+            break;   // init failed: the process is going away
+        }
+        if last_log_check.elapsed() >= Duration::from_millis(500) {
+            last_log_check = Instant::now();
+            if install::instrumentation_ended(&device_sh(&serial, &format!("cat {DEVICE_LOG}"))) { break; }
         }
         thread::sleep(Duration::from_millis(40));
     }
     let r = adb(Some(&serial), &["shell", "cat", DEVICE_LOG])?;
     Err(io::Error::other(format!(
-        "daemon did not come up within 6s\n--- device log ---\n{}",
+        "daemon did not come up\n--- device log ---\n{}",
         r.stdout
     )))
 }
@@ -356,12 +366,13 @@ fn device_sh(serial: &str, cmd: &str) -> String {
 /// system_server takes a moment to drop its UiAutomation.
 fn stop_daemon(serial: &str) -> io::Result<()> {
     let running = !device_sh(serial, &format!("pidof {PKG}")).trim().is_empty();
-    let legacy = adb(Some(serial), &["shell", "pkill", "-9", "-f", "mobaxd"]).map(|r| r.code == 0).unwrap_or(false);
+    // `[m]obaxd`: the pattern can't match the shell running it.
+    let legacy = adb(Some(serial), &["shell", "pkill -9 -f '[m]obaxd'"]).map(|r| r.code == 0).unwrap_or(false);
     if !running && !legacy { return Ok(()); }
-    let _ = adb(Some(serial), &["shell", &format!("am force-stop {PKG}; pkill -f 'instrument.*{PKG}'")]);
+    let _ = adb(Some(serial), &["shell", &format!("am force-stop {PKG}; pkill -f '[i]nstrument.*{PKG}'")]);
     let deadline = Instant::now() + Duration::from_secs(3);
     while Instant::now() < deadline {
-        if device_sh(serial, &format!("pidof {PKG}; pgrep -f mobaxd")).trim().is_empty() { break; }
+        if device_sh(serial, &format!("pidof {PKG}; pgrep -f '[m]obaxd'")).trim().is_empty() { break; }
         thread::sleep(Duration::from_millis(100));
     }
     thread::sleep(Duration::from_millis(200));
@@ -423,22 +434,26 @@ fn local_fingerprint(apk: &Path) -> io::Result<String> {
 /// Send a length-prefixed `ping` and expect `pong`. Tight timeouts so a
 /// daemon that isn't there fails quickly into the slow path.
 pub(crate) fn ping_daemon(serial: &str, port: u16) -> io::Result<()> {
+    ask_daemon(serial, port, b"ping", b"pong", Duration::from_millis(500))
+}
+
+/// One short command, one expected reply, within `wait`.
+fn ask_daemon(serial: &str, port: u16, payload: &[u8], expect: &[u8], wait: Duration) -> io::Result<()> {
     let mut sock = device_stream(serial, port)?;
     sock.set_nodelay(true)?;
-    sock.set_read_timeout(Some(Duration::from_millis(500)))?;
+    sock.set_read_timeout(Some(wait.max(Duration::from_millis(1))))?;
     sock.set_write_timeout(Some(Duration::from_millis(250)))?;
-    let payload = b"ping";
     sock.write_all(&(payload.len() as u32).to_be_bytes())?;
     sock.write_all(payload)?;
     let mut hdr = [0u8; 4];
     sock.read_exact(&mut hdr)?;
     let n = u32::from_be_bytes(hdr) as usize;
     if n > 64 {
-        return Err(io::Error::other("ping reply too large"));
+        return Err(io::Error::other("reply too large"));
     }
     let mut buf = vec![0u8; n];
     sock.read_exact(&mut buf)?;
-    if buf == b"pong" { Ok(()) } else { Err(io::Error::other("ping: unexpected reply")) }
+    if buf == expect { Ok(()) } else { Err(io::Error::other(format!("{}: unexpected reply", String::from_utf8_lossy(payload)))) }
 }
 
 /// Removes host port forwards to this device's daemon (older versions made them).

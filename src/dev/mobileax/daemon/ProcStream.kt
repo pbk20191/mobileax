@@ -98,24 +98,35 @@ internal class ProcStream(private val clip: Clipboard) {
         // Runs as the shell uid (Shell), stdout and stderr merged into one pipe
         // whose read end the looper drains.
         val p = try {
-            withContext(Loop.Work) { Shell.open(Shell.argv(argv), mergeErr = true, keepStdin = openStdin) }
+            withContext(Loop.Blocking) {
+                Shell.open(Shell.argv(argv), mergeErr = true, input = if (openStdin) Shell.Input.OPEN else Shell.Input.NONE)
+            }
         } catch (e: Exception) {
             return c.errAndEnd(spawnErr + e.message)
         }
-        // Stop the process if the client leaves while it is quiet.
+        // The client leaving ends the pump even while the process is quiet
+        // (am monitor between events): otherwise it would wait for output
+        // that never comes, and kill() below would never run.
+        val pumping = c.scope.async { pump(c, p.stdout.fileDescriptor, bufSize) }
         val hangup = c.scope.launch {
             try { c.awaitHangup() } catch (_: IOException) {}
+            pumping.cancel()
             c.close()
         }
         try {
-            pump(c, p.stdout.fileDescriptor, bufSize)
+            try {
+                pumping.await()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                if (!pumping.isCancelled) throw e
+                return   // client gone
+            }
             val code = p.exitCode()   // output ended: so has the script, and kill() leaves it be
             if (exitTrailer) c.send("__exit__ $code".toByteArray(Charsets.UTF_8))
             c.sendRaw(END)
         } finally {
             hangup.cancel()
             Io.unwatch(p.stdout.fileDescriptor)
-            p.kill()   // our ends closed: a process still running dies of SIGPIPE
+            p.kill()   // stops it unless it ended
         }
     }
 

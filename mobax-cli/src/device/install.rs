@@ -35,6 +35,12 @@ pub(crate) fn parse_pm_install(stdout: &str) -> InstallOutcome {
     }
 }
 
+/// The `am instrument -w` log says the instrumentation is over (it finished
+/// or its process died): `INSTRUMENTATION_CODE:` is its last line.
+pub(crate) fn instrumentation_ended(log: &str) -> bool {
+    log.lines().any(|l| l.starts_with("INSTRUMENTATION_CODE:"))
+}
+
 /// Starts the daemon detached; `am instrument -w` stays alive for its whole
 /// life (it holds the UiAutomation connection) and logs its status to `log`.
 pub(crate) fn instrument_cmd(port: u16, log: &str) -> String {
@@ -58,6 +64,14 @@ mod tests {
         assert!(matches!(parse_pm_install("Performing Streamed Install\nSuccess\n"), Ok));
         assert!(matches!(parse_pm_install("Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE: Existing package dev.mobileax.daemon signatures do not match newer version; ignoring!]"), SignatureMismatch));
         assert!(matches!(parse_pm_install("Failure [INSTALL_FAILED_OLDER_SDK: ...]"), Failed(m) if m.contains("INSTALL_FAILED_OLDER_SDK")));
+    }
+
+    #[test]
+    fn a_log_tells_when_the_instrumentation_has_ended() {
+        use super::instrumentation_ended;
+        assert!(!instrumentation_ended("INSTRUMENTATION_STATUS: mobaxd=mobaxd listening on @mobaxd_9008\nINSTRUMENTATION_STATUS_CODE: 0\n"));
+        assert!(instrumentation_ended("INSTRUMENTATION_STATUS: mobaxd=fatal: init failed: x\nINSTRUMENTATION_RESULT: mobaxd=fatal: init failed\nINSTRUMENTATION_CODE: 2\n"));
+        assert!(instrumentation_ended("INSTRUMENTATION_RESULT: shortMsg=Process crashed.\nINSTRUMENTATION_CODE: 0\n"));
     }
 
     #[test]

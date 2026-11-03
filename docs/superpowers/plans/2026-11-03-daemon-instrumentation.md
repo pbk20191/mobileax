@@ -16,7 +16,7 @@
 
 ## Global Constraints
 
-- `minSdk = 31`, `compileSdk = 36`, `targetSdk = 36`. SDK 29~30용 갈래 코드는 쓰지 않는다.
+- `minSdk = 29`(최종 검토 뒤 사용자 결정으로 31에서 낮춤, spec 3절), `compileSdk = 36`, `targetSdk = 36`.
 - 패키지 `dev.mobileax.daemon`, 소켓 이름 `mobaxd_<port>`(abstract)는 그대로 둔다. 와이어 프로토콜(`docs/wire.md`)은 바뀌지 않는다.
 - 릴리즈 APK도 `signingConfigs.debug`로 서명한다. 키 파일과 CI 시크릿은 쓰지 않는다.
 - `app_process` 기동 경로는 남기지 않는다(전체 이동).

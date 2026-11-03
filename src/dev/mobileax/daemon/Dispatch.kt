@@ -37,6 +37,8 @@ internal class Dispatch(
                 }
                 val s = ready.await()
                 when (head) {
+                    // Answers once init (UiAutomation) is done; if init fails the process ends instead.
+                    "ready" -> c.send(READY)
                     "dump", "dump_active", "screenshot" -> c.send(s.capture(head, cmd))
                     "keyframe" -> c.send(Server.utf8("ok n=" + Streams.requestKeyframeAll()))
                     "state_watch" -> { stateWatch(c, s.handlers().state); return }
@@ -149,6 +151,7 @@ internal class Dispatch(
     private companion object {
         val PONG = "pong".toByteArray()
         val BYE = "bye".toByteArray()
+        val READY = "ready".toByteArray()
         val GESTURES = setOf("tap", "swipe", "down", "move", "up", "scroll", "key", "text", "swipe_dir",
             "wait_for_idle", "event_seq", "settle", "settle_dump", "wait_for_text", "wait_for_activity", "tap_and_dump", "tap_and_settle")
         /** Cheap, bounded calls answered straight from the looper. */

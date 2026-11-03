@@ -12,7 +12,8 @@ commands). `ERR:<msg>` is returned on failure.
 ## Lifecycle
 
 ```
-ping                                                  → pong
+ping                                                  → pong  (answered before init finishes)
+ready                                                 → ready (once UiAutomation is connected; the process exits if init fails)
 info                                                  → "<srcW> <srcH>"
 quit                                                  → bye   (daemon exits)
 ```

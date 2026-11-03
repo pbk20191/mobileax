@@ -1,6 +1,6 @@
 # Sharp edges
 
-- The daemon is an installed APK (`dev.mobileax.daemon`, Android 12 / SDK 31
+- The daemon is an installed APK (`dev.mobileax.daemon`, Android 10 / SDK 29
   or later) run by `am instrument`. Some OEMs need "Install via USB" (or
   similar) enabled once before `mobax use` can install it. `mobax drop`
   uninstalls it (`--keep-apk` keeps it).
@@ -13,8 +13,17 @@
 - The daemon is an app uid with adopted shell permissions: binder calls name
   its own package as `callingPackage`, it declares `QUERY_ALL_PACKAGES` to
   see every package, and what needs the shell uid itself goes through `Shell`
-  (a `sh` the framework starts). `executeShellCommand` does no quoting, so
-  `Shell` feeds the script on stdin.
+  (a `sh` the framework starts). On SDK 34+ that is `executeShellCommandRwe`,
+  which does no quoting, so the script goes in on stdin as one line; on SDK
+  29–33 (Rwe is hidden there) the script, stdin data, stderr, exit code and
+  pid are files in the app's external `files/shell/` directory and
+  `executeShellCommand` runs `sh <file>`. Pid and exit code carry a random
+  per-call nonce. `-e shell file` on `am instrument` forces the file path.
+- SDK 29 (Android 10): the mirror virtual display is refused
+  (`CAPTURE_VIDEO_OUTPUT` isn't covered by adopted permissions there), so
+  `see` falls back to UiAutomation screenshots and the live streams don't
+  start; and `injectInputEvent(…, waitForAnimations)` doesn't exist, so
+  input waits for animations as before.
 - Settings provider: `SettingsDirect` uses
   `IActivityManager.getContentProviderExternal` (the `cmd content` path).
 - `am start` goes via `IActivityTaskManager.startActivityAsUser` with our
