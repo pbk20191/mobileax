@@ -37,6 +37,9 @@ jobs:
         with:
           packages: 'platforms;android-36 build-tools;36.0.0'
 
+      # mobax.jar is the daemon APK (the name predates it), signed with the
+      # debug key AGP makes on the runner: no keystore secret, and `mobax use`
+      # replaces a device copy signed by another machine's key.
       - name: Build mobax.jar
         run: ./build.sh
 

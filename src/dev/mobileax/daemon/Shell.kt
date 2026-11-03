@@ -73,20 +73,19 @@ internal object Shell {
     fun argv(args: List<String>): String = args.joinToString(" ") { quote(it) }
 
     /**
-     * Starts [cmd] (sh syntax). [mergeErr] sends the command's stderr to
+     * Starts [cmd], one line of sh. [mergeErr] sends the command's stderr to
      * stdout, as the old redirectErrorStream(true) did. With [keepStdin] the
-     * command reads what follows the script on [ShellProc.stdin]; otherwise
-     * stdin is closed after the script.
+     * command's stdin stays open as [ShellProc.stdin] (data to write, or just
+     * an open, empty stdin, as `am monitor` needs); otherwise it reads EOF.
      */
     fun open(cmd: String, mergeErr: Boolean = false, keepStdin: Boolean = false): ShellProc {
         val (out, inp, errFd) = ua.executeShellCommandRwe("sh")
-        val body = if (mergeErr) "{ $cmd\n} 2>&1" else cmd
-        // sh reads its script line by line, so with keepStdin the command
-        // must sit on one line: whatever follows it on stdin is its input.
-        // The trailing exit keeps sh from running that input as script when
-        // the command stops early (a missing directory, say).
-        val script = (if (keepStdin) "echo $PID_MARK\$\$ >&2; $body; echo $EXIT_MARK\$? >&2; exit\n"
-            else "echo $PID_MARK\$\$ >&2\n$body\necho $EXIT_MARK\$? >&2\n").toByteArray(Charsets.UTF_8)
+        val body = if (mergeErr) "{ $cmd; } 2>&1" else cmd
+        // sh reads its script line by line and the command inherits that same
+        // stdin, so the whole script is one line: the command's input is only
+        // what follows it. The trailing exit keeps sh from running that input
+        // as script when the command stops early (a missing directory, say).
+        val script = "echo $PID_MARK\$\$ >&2; $body; echo $EXIT_MARK\$? >&2; exit\n".toByteArray(Charsets.UTF_8)
         if (!keepStdin) {
             ParcelFileDescriptor.AutoCloseOutputStream(inp).use { it.write(script) }
         } else {

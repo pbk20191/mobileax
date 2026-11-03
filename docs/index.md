@@ -12,7 +12,7 @@ This guide reads as a story. Start at the top.
 
 The standard ways to drive an Android device are heavy. `adb shell input tap X Y` works for coordinates but can't find a button by label. `uiautomator2` makes you install two APKs and speaks only Python. Appium asks you to bring up a WebDriver server and then pays ~100 ms per click on top of that. None of these were designed for the case that's most common today: an LLM loop or a shell script that wants to call `tap("Continue")` thousands of times in an afternoon.
 
-mobileAX is designed exactly for that loop. You drop one jar on the device, the daemon stays warm under `app_process`, and the CLI talks to it over a length-prefixed binary protocol. A round trip is 2–7 ms. Every action verb returns a structured exit code so unattended scripts can branch without parsing stderr.
+mobileAX is designed exactly for that loop. You install one small APK on the device, the daemon stays warm as an instrumentation, and the CLI talks to it over a length-prefixed binary protocol. A round trip is 2–7 ms. Every action verb returns a structured exit code so unattended scripts can branch without parsing stderr.
 
 ## Install
 

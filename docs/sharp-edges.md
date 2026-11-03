@@ -1,11 +1,24 @@
 # Sharp edges
 
-- Settings provider rejects our `app_process` identity; `SettingsDirect`
-  uses `IActivityManager.getContentProviderExternal` (the `cmd content`
-  path).
-- `am start` goes via `IActivityTaskManager.startActivityAsUser` with
-  `callingPackage="com.android.shell"`; the system Context can't host
-  `startActivity` from our anonymous process.
+- The daemon is an installed APK (`dev.mobileax.daemon`, Android 12 / SDK 31
+  or later) run by `am instrument`. Some OEMs need "Install via USB" (or
+  similar) enabled once before `mobax use` can install it. `mobax drop`
+  uninstalls it (`--keep-apk` keeps it).
+- One daemon per device: UiAutomation has one connection. A second
+  `mobax use --port N` is refused; a UiAutomator test (or `uiautomator dump`)
+  started while the daemon runs is cut off.
+- Monkey mode is on while the daemon runs (`ActivityManager.isUserAMonkey()`
+  is true); some apps and Settings hide or block actions for a monkey. AMS
+  clears it when the daemon goes.
+- The daemon is an app uid with adopted shell permissions: binder calls name
+  its own package as `callingPackage`, it declares `QUERY_ALL_PACKAGES` to
+  see every package, and what needs the shell uid itself goes through `Shell`
+  (a `sh` the framework starts). `executeShellCommand` does no quoting, so
+  `Shell` feeds the script on stdin.
+- Settings provider: `SettingsDirect` uses
+  `IActivityManager.getContentProviderExternal` (the `cmd content` path).
+- `am start` goes via `IActivityTaskManager.startActivityAsUser` with our
+  package as `callingPackage`.
 - `BroadcastReceiver` registrations from our Context aren't routed —
   `appCounts` cache TTL'd at 4.5 s instead.
 - Most binder lookups go via reflection so the jar compiles against the

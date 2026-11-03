@@ -1,6 +1,6 @@
 # Emulators and the Android CLI
 
-mobileAX drives any device `adb` can see, API 28 or later. For emulators the
+mobileAX drives any device `adb` can see, API 31 (Android 12) or later. For emulators the
 recommended setup is Google's Android CLI (`android`) plus an AVD that
 renders on the host GPU.
 

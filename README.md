@@ -167,8 +167,8 @@ Vocabulary: `#id` `[a=v]` `[a~=sub]` `[a^=pre]` `[a$=suf]` · `:visible :clickab
 ## How it works
 
 ```
-host                                     device (shell UID via app_process)
-─────                                    ──────────────────────────────────
+host                                     device (am instrument, shell permissions)
+─────                                    ─────────────────────────────────────────
 mobax / mobax mcp ── adb server ──► @mobaxd_9008 ─► MobaxServer → Dispatch
                                               ├─ accessibility tree + events
                                               ├─ input (UiAutomation)
@@ -223,8 +223,9 @@ cargo build --release             # mobax and mobax-tui (add -p mobax-viewer for
 ./gradlew mobaxJar                # the daemon: build/mobax.jar
 ```
 
-The daemon is an unsigned release APK whose `classes.dex` R8 has shrunk with
-its runtime libraries; `app_process` accepts an APK on `CLASSPATH`. The SDK is
+The daemon is a release APK (signed with the build machine's debug key) whose
+`classes.dex` R8 has shrunk with its runtime libraries; `mobax use` installs it
+and starts it with `am instrument`. The SDK is
 found via `local.properties` (`sdk.dir`) or `ANDROID_HOME`, and the project
 imports into Android Studio for navigation.
 

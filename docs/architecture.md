@@ -1,8 +1,8 @@
 # Architecture
 
 ```
-host                                  device (shell UID, app_process)
-─────                                  ──────────────────────────────
+host                                  device (am instrument)
+─────                                  ─────────────────────
 mobax <verb> ──► adb server ─────►     MobaxServer → Dispatch (one coroutine per connection)
                                        ├─ Server.respond     sync verbs (Pm Am Wm Props Providers …)
                                        ├─ Gestures           input, wait_for_*, tap_and_*
@@ -13,8 +13,16 @@ mobax <verb> ──► adb server ─────►     MobaxServer → Dispatc
                                        └─ UiEvents / Waits   (accessibility event fan-out)
 ```
 
-The daemon runs as the shell UID via `app_process` with hidden-API
-restrictions lifted. It listens on the abstract Unix socket `@mobaxd_<port>`
+The daemon is an installed APK (`dev.mobileax.daemon`) running as an
+instrumentation: `mobax use` installs it when the device's copy isn't this
+build and starts `am instrument -w --no-hidden-api-checks … /.MobaxInstrumentation`
+(a `MonitoringInstrumentation`), so AMS forks it as a registered process.
+UiAutomation comes from the framework (`Instrumentation.getUiAutomation`,
+shared with UiAutomator's `UiDevice`), shell permissions are adopted
+(`adoptShellPermissionIdentity`), and monkey mode is on (`setRunAsMonkey`).
+What needs the shell uid itself (dumpsys, settings, logcat, the `shell`
+verb, `cp`) runs through `Shell`, a framework-started `sh`. The daemon exits
+when its `am instrument` process goes. It listens on the abstract Unix socket `@mobaxd_<port>`
 (the host opens it through the adb server: `host:transport:SERIAL`, then
 `localabstract:mobaxd_<port>`, with no host port forward) and refuses
 any peer whose `SO_PEERCRED` uid isn't shell or root. The host runs a
@@ -24,7 +32,7 @@ background `state-daemon` that subscribes to `state_watch` and atomically rewrit
 
 ## Threads
 
-One main thread runs `Looper.loop()`. Sockets, process pipes and the dumpsys
+The main thread is ActivityThread's, running `Looper.loop()`. Sockets, process pipes and the dumpsys
 pipe are registered with the main `MessageQueue` (epoll) through `Io`; each
 connection is a `Conn` driven by a coroutine on `Dispatchers.Main`.
 Accessibility events, display/package/config listeners, `ImageReader` and

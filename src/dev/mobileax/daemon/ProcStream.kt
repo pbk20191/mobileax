@@ -65,7 +65,7 @@ internal class ProcStream(private val clip: Clipboard) {
     }
 
     suspend fun monitor(c: Conn) =
-        runProcess(c, listOf("/system/bin/am", "monitor"), 16 * 1024, "monitor-spawn-failed:", exitTrailer = false)
+        runProcess(c, listOf("/system/bin/am", "monitor"), 16 * 1024, "monitor-spawn-failed:", exitTrailer = false, openStdin = true)
 
     suspend fun shell(c: Conn, tail: String?) {
         if (tail.isNullOrEmpty()) return c.errAndEnd("shell-needs-argv")
@@ -90,11 +90,15 @@ internal class ProcStream(private val clip: Clipboard) {
         clipFlow(intervalMs).filterNotNull().collect { c.send(it.toByteArray(Charsets.UTF_8)) }
     }
 
-    private suspend fun runProcess(c: Conn, argv: List<String>, bufSize: Int, spawnErr: String, exitTrailer: Boolean) {
+    /** [openStdin]: an open, empty stdin, which `am monitor` reads; others get
+     *  EOF, since the framework holds stdout open while our stdin end is open. */
+    private suspend fun runProcess(
+        c: Conn, argv: List<String>, bufSize: Int, spawnErr: String, exitTrailer: Boolean, openStdin: Boolean = false,
+    ) {
         // Runs as the shell uid (Shell), stdout and stderr merged into one pipe
         // whose read end the looper drains.
         val p = try {
-            withContext(Loop.Work) { Shell.open(Shell.argv(argv), mergeErr = true) }
+            withContext(Loop.Work) { Shell.open(Shell.argv(argv), mergeErr = true, keepStdin = openStdin) }
         } catch (e: Exception) {
             return c.errAndEnd(spawnErr + e.message)
         }
