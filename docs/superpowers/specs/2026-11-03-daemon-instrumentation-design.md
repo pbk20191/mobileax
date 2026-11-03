@@ -117,10 +117,10 @@
 - Rust 쪽 `cargo test`, `cargo clippy`, Gradle 빌드가 통과한다.
 - 릴리즈 드라이런(`gh workflow run release.yml --ref <branch> -f tag=vX-dryrun`)이 통과하고 자산 구성이 맞다.
 
-## 8. 정해 둔 세부 사항 (내 판단)
+## 8. 정해 둔 세부 사항 (따로 표시한 것 외에는 내 판단)
 
-- **서명.** 데몬 APK 전용 키를 저장소에 커밋하고, 로컬 빌드와 CI 릴리즈가 같은 키로 서명한다. 이 서명은 신뢰의 근거가 아니라 "같은 패키지로 덮어쓸 수 있게" 하는 용도라 비밀로 둘 이유가 없다. Android의 debug 키와 같은 성격이다.
-  - 그래도 기기의 서명이 다르면(`INSTALL_FAILED_UPDATE_INCOMPATIBLE`) `use`가 자동으로 지우고 다시 설치한다. 데몬 패키지에는 보존할 데이터가 없다.
+- **서명 (사용자 결정).** 릴리즈 APK도 AGP debug 키(`signingConfigs.debug`)로 서명한다. 서명은 설치를 통과하는 용도일 뿐 신뢰의 근거가 아니다. 키 파일을 저장소에 두지 않고, CI 시크릿도 쓰지 않는다.
+  - 그 결과 빌드한 곳(각자의 PC, CI 러너)마다 서명이 다르다. 기기의 서명이 다르면(`INSTALL_FAILED_UPDATE_INCOMPATIBLE`) `use`가 자동으로 지우고 다시 설치한다. 데몬 패키지에는 보존할 데이터가 없다.
 - **monkey와 "같은 결과" 목표가 부딪칠 때.** monkey는 사용자가 원한 의도된 변화라 monkey가 우선한다. monkey 때문에 앱이나 Settings 동작이 달라지는 경우는 실패로 보지 않고 `docs/sharp-edges.md`에 적는다. 2절의 "같은 결과"는 데몬 이동 때문에 생기는 차이에만 적용한다.
 - **`drop`과 패키지.** 지금의 jar 처리와 같은 의미로 둔다. `drop`은 패키지를 지우고, 지금 `keep_jar`가 하던 일은 "패키지 유지"가 된다.
   - `apps`, `devices`, MCP 출력에서는 데몬 자신의 패키지(`dev.mobileax.daemon`)를 숨긴다.
