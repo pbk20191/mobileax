@@ -1,6 +1,7 @@
 // connect / disconnect / devices — manages the on-device mobileax daemon
-// lifecycle from the host (push jar, start app_process, adb-forward TCP,
-// kill on disconnect).
+// lifecycle from the host: install the daemon APK (when the device's copy
+// isn't this build), start it with `am instrument`, stop and uninstall it
+// on disconnect.
 
 use std::io;
 use std::io::{Read, Write};
@@ -14,12 +15,16 @@ use mobax_core::adb_server::{self, Forward as ForwardEntry};
 use mobax_core::device::{clear_current, home_dir, is_set, write_current};
 
 use crate::state_cache;
+use super::install::{self, InstallOutcome, DEVICE_APK, DEVICE_FP, PKG};
 
 pub(crate) use mobax_core::adb_server::{device_stream, DEFAULT_PORT};
 pub(crate) use mobax_core::device::{set_target, target_serial, with_target};
 
-const DEVICE_JAR: &str = "/data/local/tmp/mobax.jar";
 const DEVICE_LOG: &str = "/data/local/tmp/mobax.log";
+/// The instance (port) the running daemon was started with: one per device.
+const DEVICE_PORT: &str = "/data/local/tmp/mobaxd.port";
+/// Older versions pushed the daemon here and ran it with app_process.
+const LEGACY_JAR: &str = "/data/local/tmp/mobax.jar";
 
 /// Locate the on-device jar on the host. Probes (in order):
 ///   1. $MOBILEAX_JAR
@@ -266,7 +271,7 @@ pub(crate) struct ConnectOpts {
 #[derive(Debug, Clone)]
 pub(crate) struct DisconnectOpts {
     pub serial: Option<String>,
-    pub keep_jar: bool,
+    pub keep_apk: bool,
 }
 
 /// `mobax use`: make sure the daemon runs on the device and answers.
@@ -286,9 +291,12 @@ pub(crate) fn connect(opts: &ConnectOpts) -> io::Result<(String, u16)> {
     // one goes through the adb server and binds no host port.
     remove_daemon_forwards(&serial);
 
-    // Fast path: the daemon already answers. The common case when scripts
-    // re-run `mobax use` defensively before each step.
-    if ping_daemon(&serial, port).is_ok() {
+    let apk = locate_jar()?;
+    let fp = local_fingerprint(&apk)?;
+
+    // Fast path: the daemon already answers and runs this build. The common
+    // case when scripts re-run `mobax use` defensively before each step.
+    if ping_daemon(&serial, port).is_ok() && device_sh(&serial, &format!("cat {DEVICE_FP} 2>/dev/null")).trim() == fp {
         write_current(&serial);
         let _ = state_cache::spawn_detached(&serial, port);
         return Ok((serial, port));
@@ -296,37 +304,21 @@ pub(crate) fn connect(opts: &ConnectOpts) -> io::Result<(String, u16)> {
 
     // --- slow path: (re)start the daemon ---
 
-    let jar = locate_jar()?;
+    // One daemon per device (one UiAutomation): never cut another instance's clients off.
+    let running = device_sh(&serial, &format!("pidof {PKG} >/dev/null && cat {DEVICE_PORT} 2>/dev/null"))
+        .trim()
+        .parse::<u16>()
+        .ok();
+    refuse_other_port(&serial, port, running)?;
 
-    // 1. Hard-kill any prior daemon. linkToDeath inside system_server takes a
-    //    moment to clear, so if we actually killed something we briefly wait
-    //    until pgrep stops finding it. Skip the wait entirely when nothing
-    //    matched (pkill exits non-zero) — saves ~500ms on a clean boot.
-    let killed = adb(Some(&serial), &["shell", "pkill", "-9", "-f", "mobaxd"])
-        .map(|r| r.code == 0).unwrap_or(false);
-    if killed {
-        let deadline = Instant::now() + Duration::from_secs(3);
-        while Instant::now() < deadline {
-            let r = adb(Some(&serial), &["shell", "pgrep", "-f", "mobaxd"])?;
-            if r.stdout.trim().is_empty() { break; }
-            thread::sleep(Duration::from_millis(100));
-        }
-        thread::sleep(Duration::from_millis(200));
-    }
+    stop_daemon(&serial)?;
+    ensure_installed(&serial, &apk, &fp)?;
 
-    // 2. Push jar.
-    let jar_str = jar.to_string_lossy();
-    adb_ok(Some(&serial), &["push", &jar_str, DEVICE_JAR], "push jar")?;
+    adb_ok(Some(&serial), &["shell", &format!("echo {port} > {DEVICE_PORT}")], "record port")?;
+    adb_ok(Some(&serial), &["shell", &install::instrument_cmd(port, DEVICE_LOG)], "start daemon")?;
 
-    // 3. Start the daemon detached.
-    let start = format!(
-        "CLASSPATH={DEVICE_JAR} nohup app_process /system/bin \
-         --nice-name=mobaxd dev.mobileax.daemon.Main --port={port} > {DEVICE_LOG} 2>&1 &"
-    );
-    adb_ok(Some(&serial), &["shell", &start], "start daemon")?;
-
-    // 4. Wait until the daemon answers `ping` (each probe is a few ms
-    //    through the adb server).
+    // Wait until the daemon answers `ping` (each probe is a few ms through
+    // the adb server).
     let deadline = Instant::now() + Duration::from_secs(6);
     while Instant::now() < deadline {
         if ping_daemon(&serial, port).is_ok() {
@@ -341,6 +333,91 @@ pub(crate) fn connect(opts: &ConnectOpts) -> io::Result<(String, u16)> {
         "daemon did not come up within 6s\n--- device log ---\n{}",
         r.stdout
     )))
+}
+
+fn refuse_other_port(serial: &str, port: u16, running: Option<u16>) -> io::Result<()> {
+    match running {
+        Some(r) if r != port => Err(io::Error::other(format!(
+            "daemon already running on {serial} at port {r}; one per device — run `mobax drop` first"
+        ))),
+        _ => Ok(()),
+    }
+}
+
+/// A device shell command's stdout, through the adb server when it answers.
+fn device_sh(serial: &str, cmd: &str) -> String {
+    adb_server::shell(serial, cmd)
+        .or_else(|_| adb(Some(serial), &["shell", cmd]).map(|r| r.stdout))
+        .unwrap_or_default()
+}
+
+/// Ends the instrumentation (and so its `am instrument`), plus a daemon an
+/// older version started with app_process, and waits until it's gone:
+/// system_server takes a moment to drop its UiAutomation.
+fn stop_daemon(serial: &str) -> io::Result<()> {
+    let running = !device_sh(serial, &format!("pidof {PKG}")).trim().is_empty();
+    let legacy = adb(Some(serial), &["shell", "pkill", "-9", "-f", "mobaxd"]).map(|r| r.code == 0).unwrap_or(false);
+    if !running && !legacy { return Ok(()); }
+    let _ = adb(Some(serial), &["shell", &format!("am force-stop {PKG}; pkill -f 'instrument.*{PKG}'")]);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline {
+        if device_sh(serial, &format!("pidof {PKG}; pgrep -f mobaxd")).trim().is_empty() { break; }
+        thread::sleep(Duration::from_millis(100));
+    }
+    thread::sleep(Duration::from_millis(200));
+    Ok(())
+}
+
+/// Installs the APK unless the device already has this build. A copy signed
+/// by another key (another machine's or CI's debug key) is replaced.
+fn ensure_installed(serial: &str, apk: &Path, fp: &str) -> io::Result<()> {
+    let have = device_sh(serial, &format!("pm path {PKG} >/dev/null && cat {DEVICE_FP} 2>/dev/null"));
+    if have.trim() == fp { return Ok(()); }
+    adb_ok(Some(serial), &["push", &apk.to_string_lossy(), DEVICE_APK], "push apk")?;
+    let pm_install = || -> io::Result<InstallOutcome> {
+        let r = adb(Some(serial), &["shell", "pm", "install", "-r", "-t", DEVICE_APK])?;
+        Ok(install::parse_pm_install(&format!("{}{}", r.stdout, r.stderr)))
+    };
+    let outcome = match pm_install()? {
+        InstallOutcome::SignatureMismatch => {
+            let _ = adb(Some(serial), &["shell", "pm", "uninstall", PKG]);
+            pm_install()?
+        }
+        o => o,
+    };
+    match outcome {
+        InstallOutcome::Ok => {}
+        InstallOutcome::SignatureMismatch => return Err(io::Error::other(
+            format!("install {PKG}: signatures still differ after uninstalling it"))),
+        InstallOutcome::Failed(m) => return Err(io::Error::other(format!("install {PKG}: {m}"))),
+    }
+    adb_ok(Some(serial), &["shell", &format!("echo {fp} > {DEVICE_FP}; rm -f {LEGACY_JAR}")], "record install")?;
+    Ok(())
+}
+
+/// [`install::fingerprint`] of the local APK, cached by size and mtime under
+/// ~/.mobileax so a `use` doesn't hash the file every time.
+fn local_fingerprint(apk: &Path) -> io::Result<String> {
+    let meta = std::fs::metadata(apk)?;
+    let mtime = meta.modified().ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let key = format!("{} {} {}", apk.display(), meta.len(), mtime);
+    let cache = home_dir().map(|h| h.join(".mobileax").join("apk.fp"));
+    if let Some(c) = &cache {
+        if let Ok(text) = std::fs::read_to_string(c) {
+            if let Some((k, fp)) = text.trim_end().rsplit_once(' ') {
+                if k == key { return Ok(fp.to_string()); }
+            }
+        }
+    }
+    let fp = install::fingerprint(&std::fs::read(apk)?);
+    if let Some(c) = &cache {
+        if let Some(dir) = c.parent() { let _ = std::fs::create_dir_all(dir); }
+        let _ = std::fs::write(c, format!("{key} {fp}\n"));
+    }
+    Ok(fp)
 }
 
 /// Send a length-prefixed `ping` and expect `pong`. Tight timeouts so a
@@ -389,13 +466,16 @@ pub(crate) fn disconnect(opts: &DisconnectOpts) -> io::Result<()> {
     }
     // 1. Stop the host-side state watcher.
     let _ = state_cache::stop_watcher(&serial);
-    // 2. Kill the device-side daemon.
-    let _ = adb(Some(&serial), &["shell", "pkill", "-9", "-f", "mobaxd"]);
+    // 2. Stop the device-side daemon (its UiAutomation goes, and AMS clears monkey).
+    let _ = stop_daemon(&serial);
     // 3. Remove forwards older versions left.
     remove_daemon_forwards(&serial);
-    // 4. Optionally delete the on-device jar.
-    if !opts.keep_jar {
-        let _ = adb(Some(&serial), &["shell", "rm", "-f", DEVICE_JAR, DEVICE_LOG]);
+    // 4. Uninstall it unless asked to keep it.
+    if !opts.keep_apk {
+        let _ = adb(Some(&serial), &["shell", "pm", "uninstall", PKG]);
+        let _ = adb(Some(&serial), &["shell", "rm", "-f", DEVICE_APK, DEVICE_FP, DEVICE_PORT, DEVICE_LOG, LEGACY_JAR]);
+    } else {
+        let _ = adb(Some(&serial), &["shell", "rm", "-f", DEVICE_PORT]);
     }
     clear_current(&serial);
     Ok(())
@@ -404,7 +484,7 @@ pub(crate) fn disconnect(opts: &DisconnectOpts) -> io::Result<()> {
 pub(crate) struct DeviceRow {
     pub serial: String,
     pub state: String,
-    pub jar_present: bool,
+    pub apk_installed: bool,
     pub running: bool,
     /// The daemon answers on the default instance.
     pub daemon: bool,
@@ -431,7 +511,7 @@ pub(crate) fn devices() -> io::Result<Vec<DeviceRow>> {
         let mut row = DeviceRow {
             serial: serial.clone(),
             state: state.clone(),
-            jar_present: false,
+            apk_installed: false,
             running: false,
             daemon: false,
             sdk: None,
@@ -439,8 +519,8 @@ pub(crate) fn devices() -> io::Result<Vec<DeviceRow>> {
         };
         if state == "device" {
             // Fast path: if the daemon answers `ping`,
-            // we know the daemon is running and the on-device jar must be
-            // present (the daemon can't start without it). sdk/model don't
+            // we know the daemon is running and its APK must be installed
+            // (the daemon can't start without it). sdk/model don't
             // change between reboots, so serve them from a per-serial cache
             // and skip the 16ms shell round-trip entirely. Falls through to
             // the shell probe if any of these aren't met.
@@ -449,15 +529,15 @@ pub(crate) fn devices() -> io::Result<Vec<DeviceRow>> {
             let cached = if pinged { read_devinfo_cache(&serial) } else { None };
             if let (true, Some((sdk, model))) = (pinged, cached) {
                 row.running = true;
-                row.jar_present = true;
+                row.apk_installed = true;
                 row.sdk = Some(sdk);
                 row.model = Some(model);
             } else {
                 // One batched shell call covers all four probes — saves 3
                 // round-trips vs the original four separate `adb shell`s.
                 let cmd = format!(
-                    "test -f {DEVICE_JAR} && echo jar=1 || echo jar=0; \
-                     pgrep -f mobaxd >/dev/null && echo run=1 || echo run=0; \
+                    "pm path {PKG} >/dev/null && echo apk=1 || echo apk=0; \
+                     pidof {PKG} >/dev/null && echo run=1 || echo run=0; \
                      echo sdk=$(getprop ro.build.version.sdk); \
                      echo model=$(getprop ro.product.model)"
                 );
@@ -466,7 +546,7 @@ pub(crate) fn devices() -> io::Result<Vec<DeviceRow>> {
                     .unwrap_or_default();
                 for ln in probe.lines() {
                     let ln = ln.trim();
-                    if let Some(v) = ln.strip_prefix("jar=")   { row.jar_present = v == "1"; }
+                    if let Some(v) = ln.strip_prefix("apk=")   { row.apk_installed = v == "1"; }
                     else if let Some(v) = ln.strip_prefix("run=")   { row.running = v == "1"; }
                     else if let Some(v) = ln.strip_prefix("sdk=")   { if !v.is_empty() { row.sdk = Some(v.to_string()); } }
                     else if let Some(v) = ln.strip_prefix("model=") { if !v.is_empty() { row.model = Some(v.to_string()); } }
@@ -580,5 +660,14 @@ mod tests {
         assert!(is_listed(listing, "R58M"));
         assert!(!is_listed(listing, "emulator-555"));
         assert!(!is_listed(listing, "List"));
+    }
+
+    #[test]
+    fn a_second_port_on_a_busy_device_is_refused() {
+        let e = super::refuse_other_port("emulator-5554", 9009, Some(9008)).unwrap_err();
+        let m = e.to_string();
+        assert!(m.contains("9008") && m.contains("mobax drop"), "{m}");
+        assert!(super::refuse_other_port("emulator-5554", 9008, Some(9008)).is_ok());
+        assert!(super::refuse_other_port("emulator-5554", 9009, None).is_ok());
     }
 }

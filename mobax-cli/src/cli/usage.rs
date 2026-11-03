@@ -17,7 +17,7 @@ The agent loop:
   mobax tap #back_btn             find by resource-id, tap centre
   mobax type TEXT                 type into the focused field
   mobax wait \"Welcome\"             wait for that text (or a selector: #id)
-  mobax drop                      tear the daemon down
+  mobax drop [--keep-apk]         stop the daemon and uninstall it
 
 Selectors (CSS-like, Playwright-inspired):
   mobax find 'Button[text=\"OK\"]'             attribute predicates

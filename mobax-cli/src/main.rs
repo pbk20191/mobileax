@@ -507,14 +507,14 @@ fn print_devices() -> io::Result<()> {
     }
     crate::outln!(
         "{:<24} {:<10} {:<7} {:<8} {:<8} {:<16} model",
-        "serial", "state", "jar", "running", "daemon", "sdk"
+        "serial", "state", "apk", "running", "daemon", "sdk"
     );
     for r in rows {
         crate::outln!(
             "{:<24} {:<10} {:<7} {:<8} {:<8} {:<16} {}",
             r.serial,
             r.state,
-            if r.jar_present { "yes" } else { "no" },
+            if r.apk_installed { "yes" } else { "no" },
             if r.running { "yes" } else { "no" },
             if r.daemon { "up" } else { "-" },
             r.sdk.unwrap_or_else(|| "-".into()),

@@ -4,8 +4,10 @@ import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.ActivityManager
 import android.app.UiAutomation
 import android.hardware.display.DisplayManager
+import android.os.IInterface
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.system.exitProcess
 
 /**
  * Builds the handlers once the instrumentation is up ([MobaxInstrumentation]).
@@ -24,6 +26,7 @@ internal object DaemonInit {
                 "UiAutomation unavailable: ${t.message} — another UiAutomation (e.g. a UiAutomator test) may be connected", t
             )
         }
+        exitWithConnection(ua)
         ua.adoptShellPermissionIdentity()
         runAsMonkey(ua)
         enableInteractiveWindows(ua)
@@ -60,6 +63,24 @@ internal object DaemonInit {
             }
         }
         Server(h)
+    }
+
+    /**
+     * The UiAutomation connection lives in the `am instrument` process. If
+     * that goes (killed, adb gone) we'd stay up answering ping with nothing
+     * behind it, so the host would never restart us: leave with it.
+     */
+    private fun exitWithConnection(ua: UiAutomation) {
+        try {
+            val conn = UiAutomation::class.java.getDeclaredField("mUiAutomationConnection")
+                .apply { isAccessible = true }.get(ua) as IInterface
+            conn.asBinder().linkToDeath({
+                Logx.boot("mobaxd UiAutomation connection gone (am instrument ended); exiting")
+                exitProcess(0)
+            }, 0)
+        } catch (t: Throwable) {
+            Logx.bootWarn("could not watch the UiAutomation connection", t)
+        }
     }
 
     /** `before` is what a previous daemon left behind: AMS clears the flag
