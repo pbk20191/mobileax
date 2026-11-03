@@ -53,7 +53,7 @@
   - shell 권한은 `adoptShellPermissionIdentity()`와 `executeShellCommand()`(shell uid로 실행되고 결과가 파이프로 옴)로 얻는다.
 - **abstract 소켓 도달성.** CLI는 adb server를 통해 `localabstract:mobaxd_<port>`에 붙는다. adbd(SELinux `adbd` 도메인)가 앱 도메인이 연 abstract 소켓에 `connectto` 할 수 있어야 한다. Chrome devtools(`localabstract:chrome_devtools_remote`)가 이 방식이라 될 것으로 보지만, **가장 먼저 검증할 위험**이다.
 - **숨겨진 API.** `--no-hidden-api-checks`로 instrumentation 프로세스의 검사를 끈다. 남는 숨겨진 API 호출(예: `IPackageManager` 직접 호출)은 이 플래그에 기댄다.
-- **monkey 해제.** 제 기억으로는 instrumentation이 끝나면 AMS가 `mUserIsMonkey`를 되돌린다. **미확인이라 구현 중에 AMS 소스나 실기기로 확인한다.** 되돌리지 않으면 `drop`이 직접 `setUserIsMonkey(false)`를 불러야 한다.
+- **monkey 해제.** AMS main 소스에서 확인했다. instrumentation이 끝나 UiAutomation 연결이 정리될 때(`SHUTDOWN_UI_AUTOMATION_CONNECTION_MSG`) `mUserIsMonkey = false`로 되돌린다. 에뮬레이터에서도 같은지는 스파이크에서 확인한다. 다르면 `drop`이 직접 `setUserIsMonkey(false)`를 불러야 한다.
 
 ## 4. 사용자가 정한 방식
 
