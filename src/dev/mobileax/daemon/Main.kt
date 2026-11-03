@@ -94,6 +94,7 @@ data object Main {
         h.wm = Wm(context.getSystemService(DisplayManager::class.java))
         h.uiEvents = UiEvents(ua)
         h.nodes = NodeActions(ua)
+        h.byStudy = ByStudy(ua, context)
         h.state = State(context, h.uiEvents)
 
         // Warm the dump path: the first dump_active on a cold VM costs ~1 s.

@@ -81,6 +81,7 @@ kotlin {
 
 dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
+    implementation("androidx.test.uiautomator:uiautomator:2.4.0")
 }
 
 val mobaxJar = tasks.register<Copy>("mobaxJar") {
