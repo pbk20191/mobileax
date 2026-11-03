@@ -16,15 +16,13 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.FileDescriptor
-import java.io.File
 import java.io.IOException
-import java.io.InputStream
 import kotlin.coroutines.resume
 import kotlin.time.Duration.Companion.milliseconds
 
 /**
- * Chunked-stream verbs backed by a pipe: dumpsys, logcat, shell, monitor,
- * plus clip_watch. Pipe read ends are watched on the main looper; each chunk
+ * Chunked-stream verbs backed by a pipe: dumpsys (a binder dump), logcat,
+ * shell, monitor (shell-uid processes through [Shell]), plus clip_watch. Pipe read ends are watched on the main looper; each chunk
  * becomes one `[len][bytes]` frame, then `[len=0]`.
  */
 internal class ProcStream(private val clip: Clipboard) {
@@ -36,7 +34,8 @@ internal class ProcStream(private val clip: Clipboard) {
         val args = parts.drop(1).toTypedArray()
         val b = try { withContext(Loop.Work) { Binders.service(svc) } } catch (t: Throwable) {
             if (t is kotlinx.coroutines.CancellationException) throw t
-            return c.errAndEnd("no-such-service:$svc")
+            // Our app uid may not look the service up (SELinux); the shell can.
+            return runProcess(c, listOf("dumpsys") + parts, 64 * 1024, "dumpsys-spawn-failed:", exitTrailer = false)
         }
         val pipe = try { ParcelFileDescriptor.createPipe() } catch (e: IOException) {
             return c.errAndEnd("pipe-failed:${e.message}")
@@ -92,42 +91,27 @@ internal class ProcStream(private val clip: Clipboard) {
     }
 
     private suspend fun runProcess(c: Conn, argv: List<String>, bufSize: Int, spawnErr: String, exitTrailer: Boolean) {
-        // stdout+stderr go into a pipe we own (via /proc/self/fd/N): the stream
-        // ProcessBuilder hands out is drained and closed by its reaper thread on
-        // exit, so its fd can't be read from the looper.
-        val pipe = try { Os.pipe() } catch (_: ErrnoException) { null }
-        val wfdNum = pipe?.let { fdInt(it[1]) }
+        // Runs as the shell uid (Shell), stdout and stderr merged into one pipe
+        // whose read end the looper drains.
         val p = try {
-            withContext(Loop.Work) {
-                val pb = ProcessBuilder(argv).redirectErrorStream(true)
-                if (wfdNum != null) pb.redirectOutput(File("/proc/self/fd/$wfdNum"))
-                pb.start()
-            }
-        } catch (e: IOException) {
-            pipe?.forEach { closeQuietly(it) }
+            withContext(Loop.Work) { Shell.open(Shell.argv(argv), mergeErr = true) }
+        } catch (e: Exception) {
             return c.errAndEnd(spawnErr + e.message)
         }
-        // Kill the process if the client leaves while it is quiet.
+        // Stop the process if the client leaves while it is quiet.
         val hangup = c.scope.launch {
             try { c.awaitHangup() } catch (_: IOException) {}
             c.close()
         }
         try {
-            if (pipe != null && wfdNum != null) {
-                closeQuietly(pipe[1])
-                pump(c, pipe[0], bufSize)
-            } else {
-                pumpBlocking(c, p.inputStream, bufSize)
-            }
-            if (exitTrailer) {
-                val code = withContext(Loop.Work) { try { p.waitFor() } catch (_: InterruptedException) { -1 } }
-                c.send("__exit__ $code".toByteArray(Charsets.UTF_8))
-            }
+            pump(c, p.stdout.fileDescriptor, bufSize)
+            val code = p.exitCode()   // output ended: so has the script, and kill() leaves it be
+            if (exitTrailer) c.send("__exit__ $code".toByteArray(Charsets.UTF_8))
             c.sendRaw(END)
         } finally {
             hangup.cancel()
-            pipe?.let { Io.unwatch(it[0]); closeQuietly(it[0]); closeQuietly(it[1]) }
-            try { p.destroy() } catch (_: Throwable) {}   // no-op once exited; kills it if the client left
+            Io.unwatch(p.stdout.fileDescriptor)
+            p.kill()   // our ends closed: a process still running dies of SIGPIPE
         }
     }
 
@@ -145,16 +129,6 @@ internal class ProcStream(private val clip: Clipboard) {
             }
             if (n <= 0) return
             c.send(buf.copyOf(n))
-        }
-    }
-
-    /** Fallback when the process pipe's fd can't be reached: blocking reads on Work. */
-    private suspend fun pumpBlocking(c: Conn, input: InputStream, bufSize: Int) {
-        while (true) {
-            val buf = ByteArray(bufSize)
-            val n = withContext(Loop.Work) { input.read(buf) }
-            if (n <= 0) return
-            c.send(buf, 0, n)
         }
     }
 
@@ -177,16 +151,5 @@ internal class ProcStream(private val clip: Clipboard) {
         val END = byteArrayOf(0, 0, 0, 0)
 
         fun split(tail: String?): List<String> = if (tail.isNullOrEmpty()) emptyList() else tail.split(WS)
-
-        fun fdInt(fd: FileDescriptor): Int? = try {
-            FileDescriptor::class.java.getDeclaredMethod($$"getInt$").invoke(fd) as Int
-        } catch (_: Throwable) {
-            null
-        }
-
-        fun closeQuietly(fd: FileDescriptor) {
-            if (!fd.valid()) return
-            try { Os.close(fd) } catch (_: Throwable) {}
-        }
     }
 }

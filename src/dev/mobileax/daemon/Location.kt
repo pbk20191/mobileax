@@ -1,7 +1,5 @@
 package dev.mobileax.daemon
 
-import java.io.BufferedReader
-import java.io.InputStreamReader
 import java.nio.charset.StandardCharsets
 import java.util.regex.Matcher
 import java.util.regex.Pattern
@@ -25,23 +23,20 @@ import java.util.regex.Pattern
 </lon></lat></provider> */
 internal class Location {
     fun last(): ByteArray {
-        val p: Process?
-        try {
-            p = ProcessBuilder("/system/bin/dumpsys", "location")
-                .redirectErrorStream(true).start()
+        val dump = try {
+            Shell.runBlocking("dumpsys location 2>&1")
         } catch (e: Exception) {
             return err("dumpsys-spawn:" + e.message)
         }
+        if (dump.exit < 0) return err("dumpsys-spawn:" + dump.err.trim())
 
         // Preserve first-seen order; the freshest "last location" block
         // tends to appear before per-provider history.
         val fixes: MutableMap<String?, DoubleArray?> = LinkedHashMap()
         val mocks: MutableMap<String?, Boolean?> = LinkedHashMap()
         try {
-            BufferedReader(
-                InputStreamReader(p.inputStream, StandardCharsets.UTF_8)
-            ).use { br ->
-                for (ln in br.lineSequence()) {
+            run {
+                for (ln in dump.out.lineSequence()) {
                     val m: Matcher = LOC.matcher(ln)
                     while (m.find()) {
                         val prov = m.group(1)!!
@@ -62,11 +57,6 @@ internal class Location {
             }
         } catch (e: Exception) {
             return err("dumpsys-read:" + e.message)
-        } finally {
-            try {
-                p.destroy()
-            } catch (_: Throwable) {
-            }
         }
 
         val out = StringBuilder(256)

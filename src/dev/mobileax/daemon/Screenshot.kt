@@ -17,7 +17,6 @@ import android.view.Display
 import dev.mobileax.daemon.Loop.mainHandler
 import java.io.BufferedReader
 import java.io.ByteArrayOutputStream
-import java.io.InputStreamReader
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.concurrent.Volatile
@@ -528,15 +527,8 @@ internal class Screenshot(private val ua: UiAutomation) {
          * short name (e.g. `com.bank.app/.LoginActivity`) or null.  */
         private fun findSecureWindow(): String? {
             try {
-                val p = Runtime.getRuntime().exec(
-                    arrayOf("dumpsys", "window", "windows")
-                )
-                BufferedReader(
-                    InputStreamReader(
-                        p.inputStream,
-                        StandardCharsets.UTF_8
-                    )
-                ).use { r ->
+                val dump = Shell.runBlocking("dumpsys window windows").out
+                BufferedReader(dump.reader()).use { r ->
                     var currentWin: String? = null
                     var line: String?
                     while ((r.readLine().also { line = it }) != null) {
@@ -557,7 +549,6 @@ internal class Screenshot(private val ua: UiAutomation) {
                         }
                     }
                 }
-                p.waitFor()
             } catch (_: Throwable) {
             }
             return null
