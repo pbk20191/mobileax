@@ -16,6 +16,7 @@ pub mod device;
 pub mod errors;
 pub mod json;
 pub mod json_out;
+pub mod regex;
 pub mod screen;
 pub mod selector;
 pub mod ui_dump;
