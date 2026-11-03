@@ -4,10 +4,6 @@ import android.graphics.Point
 import android.hardware.display.DisplayManager
 import android.util.DisplayMetrics
 import android.view.Display
-import dev.mobileax.daemon.Binders.asInterface
-import dev.mobileax.daemon.Binders.service
-import java.lang.reflect.InvocationTargetException
-import java.lang.reflect.Method
 import java.nio.charset.StandardCharsets
 
 /**
@@ -39,38 +35,15 @@ internal class Wm(private val dm: DisplayManager) {
         }
     }
 
+    /** Pins the default display to [rotation] (0..3, Surface.ROTATION_*),
+     *  through UiAutomation.setRotation: UiDevice has no 180° setter. */
     fun setRotation(rotation: Int): ByteArray {
-        try {
-            val iwm = asInterface(
-                $$"android.view.IWindowManager$Stub", service("window")
-            )
-            // freezeRotation(int) is the long-stable shape; newer surfaces add
-            // a String caller. Try both.
-            var best: Method? = null
-            for (m in iwm!!.javaClass.getMethods()) {
-                if ("freezeRotation" != m.name) continue
-                val p = m.getParameterTypes()
-                if (p.size >= 1 && p[0] == Int::class.javaPrimitiveType && (best == null || p.size < best.getParameterTypes().size)) {
-                    best = m
-                }
-            }
-            if (best == null) return err("freezeRotation-missing")
-            val p = best.getParameterTypes()
-            val args = arrayOfNulls<Any>(p.size)
-            args[0] = rotation
-            for (i in 1..<p.size) {
-                if (p[i] == String::class.java) args[i] = callerPackage
-                else if (p[i] == Int::class.javaPrimitiveType) args[i] = 0
-                else if (p[i] == Boolean::class.javaPrimitiveType) args[i] = false
-                else args[i] = null
-            }
-            best.invoke(iwm, *args)
-            return ok("ok rotation=$rotation")
-        } catch (ite: InvocationTargetException) {
-            val c: Throwable = (ite.cause ?: ite)
-            return err("rotation-failed:" + c.javaClass.getSimpleName() + ":" + c.message)
+        if (rotation !in 0..3) return err("bad-rotation:$rotation")
+        return try {
+            // ROTATION_FREEZE_0..270 are 0..3, the same numbers.
+            if (ua.setRotation(rotation)) ok("ok rotation=$rotation") else err("rotation-failed:refused")
         } catch (t: Throwable) {
-            return err("rotation-threw:" + t.javaClass.getSimpleName() + ":" + t.message)
+            err("rotation-threw:" + t.javaClass.getSimpleName() + ":" + t.message)
         }
     }
 

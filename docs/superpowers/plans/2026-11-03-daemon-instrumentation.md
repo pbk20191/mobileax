@@ -701,3 +701,16 @@ androidx.test 버전: `runner 1.7.0`, `monitor 1.8.0`, `uiautomator 2.4.0` (구�
 | 7. `start()` 없이 5분 생존 | **통과.** 300초 후에도 프로세스와 `am instrument`가 살아 있고 소켓이 `pong` |
 
 계획에 반영할 점: Task 3의 `Shell.open`은 `sh -c` 대신 stdin 스크립트 방식으로 한다(ledger의 Task 1 Ruling).
+
+## androidx.test 대체 결과 (Task 5b, uiautomator 2.4.0 소스와 에뮬레이터 SDK 36 기준)
+
+| 후보 | 판정 | 근거 |
+|---|---|---|
+| `wm_rotation` | **바꿈**, 단 `UiDevice` 대신 공개 API `UiAutomation.setRotation` | `UiDevice`에는 180° 설정이 없다(`setOrientationLeft/Right/Natural/Portrait/Landscape`뿐). `IWindowManager.freezeRotation` 리플렉션을 공개 API로 바꿨다. 0~3 모두 `user_rotation`이 같은 값이 되고 `accelerometer_rotation=0`, 이전 경로와 같다. 범위 밖 값은 `ERR:bad-rotation:N`(이전에도 ERR) |
+| `wait_for_idle` | **유지** | `UiDevice.waitForIdle`은 조용한 시간이 500ms로 고정(`QUIET_TIME_TO_BE_CONSIDERED_IDLE_STATE`)이라 `idle_ms`를 못 받고, 응답의 `idle=`(조용했던 시간)도 줄 수 없다 |
+| `wait_for_text` | **유지** | `Until`/`WaitMixin`은 100ms 폴링이다(`DEFAULT_POLL_INTERVAL`). 지금은 접근성 이벤트마다 다시 확인한다. `scope=active`와 `match=` 모드도 `By`로 같게 표현되지 않는다 |
+| `wait_for_activity` | **유지** | `getCurrentPackageName`은 패키지만 준다. 지금은 정확한 컴포넌트 또는 같은 패키지를 확인한다 |
+| `info`의 화면 크기 | **유지** | `info`는 캡처·스트림이 쓰는 원본 크기(`shot.sourceSize`)를 돌려준다. 다른 출처(`getDisplaySize`)로 바꾸면 캡처와 어긋날 수 있다. 세로 고정 앱만 있어 가로 상태 비교는 못 했다 |
+| 키 이름 → 키 코드 | **유지** | `pressKeyCode`는 동기 주입이라 애니메이션을 기다린다(지난 측정: Recents 5492ms 대 627ms) |
+| tap, swipe, 드래그 | **유지** | 같은 이유(`click`/`swipe`/`drag`는 동기 주입) |
+| dump | **유지** | `dumpWindowHierarchy`는 XML이라 호스트 파서와 맞지 않는다 |
