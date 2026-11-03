@@ -1,7 +1,5 @@
-# Entry point: app_process invokes Main.main.
--keep public class dev.mobileax.daemon.Main {
-    public static void main(java.lang.String[]);
-}
+# Entry point: named in the manifest's <instrumentation>, created by am instrument.
+-keep public class dev.mobileax.daemon.MobaxInstrumentation { <init>(); }
 # Allow R8 to rename everything else and re-pack to a single root namespace.
 -allowaccessmodification
 -repackageclasses ''

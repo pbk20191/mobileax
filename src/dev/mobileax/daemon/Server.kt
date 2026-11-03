@@ -9,7 +9,7 @@ internal class Server(private val h: Handlers) {
      * stay legible as we grow the command surface.  */
     /** Wired up in [Main]; `props` stays null if its init failed. */
     class Handlers {
-        lateinit var sysCtx: Context
+        lateinit var ctx: Context
         lateinit var dumper: Dumper
         lateinit var shot: Screenshot
         lateinit var input: Input

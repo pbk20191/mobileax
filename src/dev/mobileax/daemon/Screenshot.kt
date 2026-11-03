@@ -2,8 +2,6 @@ package dev.mobileax.daemon
 
 import android.annotation.TargetApi
 import android.app.UiAutomation
-import android.content.Context
-import android.content.ContextWrapper
 import android.graphics.Bitmap
 import android.graphics.Bitmap.CompressFormat
 import android.graphics.ColorSpace
@@ -518,27 +516,11 @@ internal class Screenshot(private val ua: UiAutomation) {
         @Throws(Exception::class)
         private fun initDisplayManager(): DisplayManager? {
             // Android 14+ rejects createVirtualDisplay when the Context's
-            // op-package name doesn't map to the calling UID ("packageName
-            // must match the calling uid"). The daemon's Application is
-            // com.android.shell, our uid's package; only if building it failed
-            // (the system context, "android") is the name forced here.
-            var base = Binders.appContext()
-            var chosen = "app context"
-            if ("com.android.shell" != base.opPackageName) {
-                val inner = base
-                base = object : ContextWrapper(inner) {
-                    override fun getPackageName(): String {
-                        return "com.android.shell"
-                    }
-
-                    override fun getOpPackageName(): String {
-                        return "com.android.shell"
-                    }
-                }
-                chosen += " + wrapper"
-            }
-            Logx.i("screenshot: display ctx = $chosen, op=${base.opPackageName}")
-            return base.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager?
+            // op-package name doesn't map to the calling UID. Ours is our own
+            // package, and the mirror's CAPTURE_VIDEO_OUTPUT comes from the
+            // adopted shell permissions.
+            Logx.i("screenshot: display ctx op=${ctx.opPackageName}")
+            return ctx.getSystemService(DisplayManager::class.java)
         }
 
         /** Walk `dumpsys window windows` for the first visible window

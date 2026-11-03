@@ -1,11 +1,11 @@
 /*
  * Build for the on-device daemon in src/.
  *
- * Not a launchable app: Main is started by app_process with the APK on
- * CLASSPATH (app_process only needs classes.dex inside a zip). AGP handles
- * the SDK (platform + build-tools, downloaded if missing), Kotlin, and R8;
- * mobaxJar copies the release APK to build/mobax.jar, the path the CLI, installer
- * and release workflow expect.
+ * Not a launchable app: the APK is installed and run as an instrumentation
+ * (`am instrument -w … dev.mobileax.daemon/.MobaxInstrumentation`). AGP
+ * handles the SDK (platform + build-tools, downloaded if missing), Kotlin,
+ * and R8; mobaxJar copies the release APK to build/mobax.jar, the path the
+ * CLI, installer and release workflow expect (the name predates the APK).
  *
  *   ./gradlew mobaxJar                       build build/mobax.jar
  */
@@ -21,7 +21,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        minSdk = 28
+        minSdk = 31
         targetSdk = 36
     }
 
@@ -40,8 +40,10 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles("proguard-rules.pro")
-            // app_process doesn't check signatures; leave the APK unsigned.
-            signingConfig = null
+            // Installing needs a signature, not a trusted one: the debug key
+            // (generated per machine/CI runner). A device holding another
+            // build's signature gets it uninstalled and reinstalled by `mobax use`.
+            signingConfig = signingConfigs.getByName("debug")
             vcsInfo.include = false
         }
     }
@@ -81,11 +83,14 @@ kotlin {
 
 dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
+    implementation("androidx.test:runner:1.7.0")
+    implementation("androidx.test:monitor:1.8.0")
+    implementation("androidx.test.uiautomator:uiautomator:2.4.0")
 }
 
 val mobaxJar = tasks.register<Copy>("mobaxJar") {
     group = "build"
-    description = "Builds build/mobax.jar (the release APK) for app_process."
+    description = "Builds build/mobax.jar (the release APK, installed and run via am instrument)."
     from(tasks.named("assembleRelease").map { layout.buildDirectory.dir("outputs/apk/release") }) {
         include("*.apk")
         rename { "mobax.jar" }

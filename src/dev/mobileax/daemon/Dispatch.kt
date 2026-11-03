@@ -86,7 +86,7 @@ internal class Dispatch(
 
     private var transfers: Transfers? = null
     private fun transfers(s: Server) = transfers
-        ?: Transfers(s.handlers().sysCtx, s.handlers().installer).also { transfers = it }
+        ?: Transfers(s.handlers().ctx, s.handlers().installer).also { transfers = it }
 
     /** install_multi sizes=N0,N1,… [reinstall=1] [grant=1] */
     private suspend fun installMulti(c: Conn, s: Server, cmd: String): ByteArray {
