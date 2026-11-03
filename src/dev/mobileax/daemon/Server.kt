@@ -7,7 +7,7 @@ import java.nio.charset.StandardCharsets
 internal class Server(private val h: Handlers) {
     /** Bag of handler classes wired up in [Main]; lets the constructor
      * stay legible as we grow the command surface.  */
-    /** Wired up in [Main]; `props` stays null if its init failed. */
+    /** Wired up in [DaemonInit]; `props` stays null if its init failed. */
     class Handlers {
         lateinit var ctx: Context
         lateinit var dumper: Dumper

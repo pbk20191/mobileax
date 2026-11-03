@@ -159,11 +159,11 @@ internal class SettingsDirect {
         // (5-arg with AttributionSource: AS, authority, method, arg, extras — prefixLen=2, slot=1)
         // For the legacy 4-arg shape there's no authority slot; just callingPkg.
         if (prefixLen == 1 && pre[0] == null) {
-            pre[0] = "com.android.shell"
+            pre[0] = callerPackage
             authoritySlot = -1
         } else if (prefixLen == 2 && !seenAttribution && pre[0] == null) {
             // (callingPkg, authority, ...)
-            pre[0] = "com.android.shell"
+            pre[0] = callerPackage
             authoritySlot = 1
         }
         return pre
@@ -206,7 +206,7 @@ internal class SettingsDirect {
                 val ctor: Constructor<*> = b.getConstructor(Int::class.javaPrimitiveType)
                 val builder: Any = ctor.newInstance(Process.myUid())
                 val setPkg = b.getMethod("setPackageName", String::class.java)
-                setPkg.invoke(builder, "com.android.shell")
+                setPkg.invoke(builder, callerPackage)
                 return b.getMethod("build").invoke(builder)
             } catch (_: Throwable) {
                 return null

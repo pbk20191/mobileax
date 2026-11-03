@@ -9,10 +9,10 @@ import java.nio.charset.StandardCharsets
 /**
  * Clipboard read/write/watch via the `IClipboard` binder.
  * 
- * AOSP's ClipboardService unconditionally allows shell UID:
- * `if (callingUid == Process.SHELL_UID) return true;`
- * so we don't need foreground-window tricks or runtime grants — just
- * reach the binder and call getPrimaryClip / setPrimaryClip directly.
+ * We are an app uid, which ClipboardService only lets read in the
+ * background with READ_CLIPBOARD_IN_BACKGROUND; that comes with the adopted
+ * shell permissions, so the binder's getPrimaryClip / setPrimaryClip work
+ * directly, under our own package as callingPackage.
  * 
  * Watch mode polls every `interval_ms` (default 500); listener
  * callback wiring would need a custom Binder stub for
@@ -90,7 +90,7 @@ internal class Clipboard {
 
     // ---------- reflection helpers ----------
     companion object {
-        private const val CALLER = "com.android.shell"
+        private val CALLER: String get() = callerPackage
 
         /** Build the arg array for getPrimaryClip / setPrimaryClip. The
          * signatures across API levels share the same shape:

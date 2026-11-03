@@ -59,7 +59,7 @@ internal class Wm(private val dm: DisplayManager) {
             val args = arrayOfNulls<Any>(p.size)
             args[0] = rotation
             for (i in 1..<p.size) {
-                if (p[i] == String::class.java) args[i] = "com.android.shell"
+                if (p[i] == String::class.java) args[i] = callerPackage
                 else if (p[i] == Int::class.javaPrimitiveType) args[i] = 0
                 else if (p[i] == Boolean::class.javaPrimitiveType) args[i] = false
                 else args[i] = null

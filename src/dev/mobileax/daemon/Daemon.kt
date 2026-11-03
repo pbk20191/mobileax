@@ -21,6 +21,9 @@ internal val instr: Instrumentation get() = InstrumentationRegistry.getInstrumen
 /** Our own package (dev.mobileax.daemon); shell permissions are adopted on top. */
 internal val ctx: Context get() = instr.context
 
+/** The callingPackage for binder calls: it must belong to our uid. */
+internal val callerPackage: String get() = ctx.opPackageName
+
 /** Connected on first use; the same flags return the cached instance. */
 internal val ua: UiAutomation get() = instr.getUiAutomation(UA_FLAGS)
 
