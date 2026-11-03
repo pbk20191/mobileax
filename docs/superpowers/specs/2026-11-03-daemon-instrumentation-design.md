@@ -84,6 +84,25 @@
 | `AndroidManifest.xml` | AGP를 위한 빈 `<application>` | `<instrumentation android:name=… android:targetPackage="dev.mobileax.daemon">`. 권한 선언은 최소로 하고, shell 권한은 adopt로 얻는다. |
 | 빌드 | 릴리즈 APK를 `build/mobax.jar`로 복사 (서명 없음) | 같은 APK를 설치용 산출물로 쓴다. 서명은 8절. |
 
+## 5.1 androidx.test 기반 (사용자 결정)
+
+사용자 결정은 두 가지다. 진입점은 `AndroidJUnitRunner`의 부모 클래스(`androidx.test.runner.MonitoringInstrumentation`)를 상속한다. 그리고 가능한 부분은 모두 androidx.test 기반으로 바꾼다.
+
+- **진입점.** `MobaxInstrumentation : MonitoringInstrumentation`.
+  - `AndroidJUnitRunner` 자체는 쓰지 않는다. 테스트를 다 돌린 뒤 `finish()`해 버려서 계속 떠 있어야 하는 데몬과 맞지 않기 때문이다.
+  - `MonitoringInstrumentation`이 해 주는 것(`InstrumentationRegistry` 등록, 크래시 시 정리)은 그대로 받는다.
+- **전역 접근.** instrumentation, context, 인자는 `androidx.test.platform.app.InstrumentationRegistry`(`androidx.test:monitor`)로 얻는다. 데몬 자체의 전역 객체는 만들지 않는다.
+- **UiAutomation 소유.** `androidx.test.uiautomator`의 `UiDevice`와 데몬이 같은 UiAutomation 인스턴스를 쓴다.
+  - 연결 플래그는 `Configurator.setUiAutomationFlags`로 하나로 맞춘다. 플래그가 다르면 `getUiAutomation(flags)`이 다시 연결하기 때문이다.
+- **대체 기준.** 데몬의 각 경로를 androidx.test(주로 `UiDevice`, `By`/`Until`)로 바꿀 수 있으면 바꾼다. 다만 2절 안티목표의 지연 기준선을 해치거나 결과를 바꾸면 지금 코드를 유지하고, 그 이유를 코드 주석에 남긴다.
+  - 미리 알려진 유지 대상:
+    - 애니메이션을 기다리지 않는 입력 주입(3-arg `injectInputEvent`). `UiDevice.click`/`pressKeyCode`/`pressRecentApps`는 동기 주입이라 애니메이션을 기다린다. Recents 키는 측정상 5492ms 대 627ms였다.
+    - `settle_dump`와 JSON dump. `dumpWindowHierarchy`는 XML이고 호스트 파서와 맞지 않는다.
+    - 미러 스크린샷 경로. `UiDevice.takeScreenshot`은 한 장씩 찍는다.
+    - stderr와 종료 코드가 필요한 shell 실행. `UiDevice.executeShellCommand`는 stdout만 준다.
+  - 선택자 문법은 호스트(`mobax-core`)에 있고 와이어로 오므로 `By`로 바꾸지 않는다.
+- **의존성.** `androidx.test:runner`, `androidx.test:monitor`, `androidx.test.uiautomator:uiautomator`의 구현 시점 최신 안정 버전을 정확한 버전으로 고정한다. 쓰지 않는 코드(JUnit 등)는 R8로 걷어 낸다.
+
 ## 6. 기동·정리 (`mobax-cli/src/device/daemon.rs`)
 
 **`mobax use`**

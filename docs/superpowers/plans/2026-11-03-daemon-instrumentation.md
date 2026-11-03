@@ -5,11 +5,12 @@
 **Goal:** 데몬을 `app_process`에서 설치된 APK의 instrumentation 프로세스(`am instrument -w`)로 옮긴다. UiAutomation은 공식 API로 얻고, monkey는 정식으로 켠다. 모든 verb의 동작은 유지한다.
 
 **Architecture:**
-- 같은 APK(`dev.mobileax.daemon`)에 `Instrumentation` 서브클래스를 두고, AMS가 fork한 프로세스의 main looper 위에서 지금의 서버·코루틴 구조를 그대로 돌린다.
+- 같은 APK(`dev.mobileax.daemon`)에 `androidx.test.runner.MonitoringInstrumentation`(AndroidJUnitRunner의 부모) 서브클래스를 둔다. AMS가 fork한 프로세스의 main looper 위에서 지금의 서버·코루틴 구조를 그대로 돌린다.
+- instrumentation, context, 인자는 `InstrumentationRegistry`로 얻는다. UiAutomation은 `UiDevice`와 같은 인스턴스를 쓴다. 데몬 경로 중 androidx.test로 바꿔도 결과와 성능이 같은 곳은 바꾼다(spec 5.1).
 - shell 권한이 필요한 일은 두 갈래로 처리한다. 권한 검사는 `adoptShellPermissionIdentity()`로 통과하고, shell uid 자체가 필요한 일은 `executeShellCommand*`(shell uid로 실행)로 넘긴다.
 - 호스트 쪽은 기동과 정리 경로만 바뀐다. 기존 jar push + `app_process` 대신 APK 설치 + `am instrument`를 쓴다.
 
-**Tech Stack:** Kotlin(데몬, AGP, kotlinx-coroutines), Rust std-only(CLI), adb, GitHub Actions
+**Tech Stack:** Kotlin(데몬, AGP, kotlinx-coroutines, androidx.test runner/monitor/uiautomator), Rust std-only(CLI), adb, GitHub Actions
 
 **Spec:** `docs/superpowers/specs/2026-11-03-daemon-instrumentation-design.md`
 
@@ -21,6 +22,9 @@
 - `app_process` 기동 경로는 남기지 않는다(전체 이동).
 - 데몬은 기기당 하나다. 다른 `--port`로 `use`하면 오류를 낸다. 메시지에는 `mobax drop` 후 다시 하라는 안내를 넣는다.
 - CLI는 third-party 의존성 없이 std만 쓴다(`mobax-cli/Cargo.toml` 주석).
+- 데몬 의존성은 `androidx.test:runner`, `androidx.test:monitor`, `androidx.test.uiautomator:uiautomator`를 추가한다. 구현 시점의 최신 안정 버전을 정확한 버전으로 고정한다.
+- `UiAutomation` 연결 플래그는 한 곳의 상수 `UA_FLAGS = UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES`로 두고, `Configurator.getInstance().uiAutomationFlags`에도 같은 값을 넣는다.
+- androidx.test로 바꾼 경로가 아래 기준선을 해치거나 결과를 바꾸면 그 경로는 지금 코드를 유지하고, 이유를 코드 주석에 한 줄 남긴다(spec 5.1).
 - **Task 1의 확인 1(소켓 도달)이나 확인 2(monkey 켜기·끄기)가 실패하면 프로젝트를 중단한다.** 대체 방식(TCP + `adb forward`, `setActivityController`)으로 가지 않는다.
 - 성능 기준선(SDK 36 에뮬레이터 `Medium_Phone`)에서 잡음을 넘는 회귀가 없어야 한다.
   - 유휴 `ui` 약 265ms
@@ -56,7 +60,7 @@
 
 - [ ] **Step 1: 스파이크 instrumentation 작성**
 
-`SpikeInstrumentation : android.app.Instrumentation`이 하는 일:
+`SpikeInstrumentation : androidx.test.runner.MonitoringInstrumentation`이 하는 일. 스파이크 동안에만 `build.gradle.kts`에 Task 2의 androidx.test 의존성을 임시로 추가한다.
 - `onCreate`(main 스레드)에서 `LocalServerSocket("mobaxd_spike")`를 연다.
 - 별도 스레드에서 accept하고, 길이 접두(`uint32 BE`) 프레임 `ping`에 `pong`으로 답한다. 와이어 형식과 같다.
 - `start()`는 부르지 않는다.
@@ -66,6 +70,8 @@
   - Work 스레드에서 `getUiAutomation()`으로 연결한 결과
   - 3-arg `injectInputEvent(ev, false, false)` 리플렉션 결과
   - `adoptShellPermissionIdentity()` 아래에서 확인 4의 각 항목 결과
+  - 확인 6: `Configurator.getInstance().uiAutomationFlags = UA_FLAGS` 후 `UiDevice.getInstance(this)`를 만들고, 그 `uiAutomation`이 `getUiAutomation(UA_FLAGS)`와 같은 인스턴스(`===`)인지
+  - 확인 7: `super.onCreate(arguments)`만 부르고 `start()`는 부르지 않은 상태에서, 5분 동안 프로세스와 `am instrument -w`가 살아 있는지. `MonitoringInstrumentation`이 스스로 `finish()`하지 않는지를 본다.
 
 manifest에는 다음을 추가한다.
 ```xml
@@ -117,11 +123,15 @@ AMS main 소스상으로는 instrumentation이 끝나 UiAutomation 연결이 정
 
 **클립보드에 대해:** shell uid는 `ClipboardService`의 uid 예외(`Clipboard.kt` 주석)로 통과했지만, 앱 uid는 adopt만으로 그 예외에 해당하지 않을 수 있다. 실패하면 `executeShellCommand`로 할 수 있는 shell 측 수단이 있는지 확인한다. 예를 들어 이 SDK의 `cmd clipboard` 존재 여부를 본다. 결과를 기록한다.
 
+- [ ] **Step 5b: 확인 6~7 (실패해도 중단하지 않고 사용자에게 보고)**
+
+`spike.log`에서 확인 6의 `same=true`와 확인 7의 5분 생존을 본다. 확인 7이 실패하면 `start()`를 부르고 `onStart()`를 오버라이드해 반환하지 않게 하는 방식을 시험한다. 예를 들어 `CountDownLatch`로 종료 요청까지 기다린다. 결과를 기록한다.
+
 - [ ] **Step 6: 결과 기록, 중단 판정**
 
 - 이 계획 문서 끝에 "스파이크 결과" 절을 만들고 확인 1~5와 클립보드 결과를 한 줄씩 적는다.
 - 확인 1이나 2가 실패하면 여기서 멈추고 사용자에게 보고한다. 브랜치는 버리는 쪽으로 사용자와 정한다.
-- 확인 3~5나 클립보드가 실패하면 멈추고 사용자에게 보고한다. 해당 verb를 어떻게 할지 정해야 하기 때문이다.
+- 확인 3~7이나 클립보드가 실패하면 멈추고 사용자에게 보고한다. 해당 verb나 진입 방식을 어떻게 할지 정해야 하기 때문이다.
 - 임시 파일은 되돌린다(`git checkout -- AndroidManifest.xml build.gradle.kts`, 스파이크 파일 삭제).
 
 ```bash
@@ -136,6 +146,7 @@ git commit -m "docs: instrumentation spike results"
 **Files:**
 - Modify: `build.gradle.kts`
   - `minSdk = 31`
+  - `implementation`에 `androidx.test:runner`, `androidx.test:monitor`, `androidx.test.uiautomator:uiautomator`를 추가한다(정확한 버전 고정)
   - release `signingConfig = signingConfigs.getByName("debug")`
   - 머리 주석과 `mobaxJar` 설명을 instrumentation 기준으로 바꾼다.
 - Modify: `AndroidManifest.xml`. `<instrumentation android:name="dev.mobileax.daemon.MobaxInstrumentation" android:targetPackage="dev.mobileax.daemon" />`를 넣는다. 주석은 "installed and run via `am instrument`"로 바꾼다.
@@ -143,13 +154,19 @@ git commit -m "docs: instrumentation spike results"
 - Modify: `src/dev/mobileax/daemon/Main.kt`. 진입점 역할을 없애고 init 로직(`initDaemon`, `enableInteractiveWindows`)만 `internal object DaemonInit`으로 남긴다. 파일 이름은 `DaemonInit.kt`로 바꿔도 된다.
 - Modify: `src/dev/mobileax/daemon/Binders.kt`. `systemContextLazy`, `appContextLazy`, `shellApplication()`을 지우고 `service()`, `asInterface()`, `iPackageManager()` 등 binder 도우미만 남긴다.
 - Modify: `src/dev/mobileax/daemon/Logx.kt`. `boot`/`bootWarn`이 `System.err`와 함께 `Instrumentation.sendStatus`로도 내보낸다.
-- Modify: `src/dev/mobileax/daemon/Screenshot.kt`. `initDisplayManager()`가 `Binders.appContext()` 대신 `Daemon.ctx`를 쓰고, shell 이름 wrapper를 지운다.
-- Modify: `proguard-rules.pro`. `MobaxInstrumentation`을 keep한다. manifest에서 이름으로 참조되기 때문이다.
+- Modify: `src/dev/mobileax/daemon/Screenshot.kt`. `initDisplayManager()`가 `Binders.appContext()` 대신 `ctx`를 쓰고, shell 이름 wrapper를 지운다.
+- Modify: `proguard-rules.pro`. `MobaxInstrumentation`을 keep한다. manifest에서 이름으로 참조되기 때문이다. androidx.test가 리플렉션으로 찾는 클래스 때문에 R8 경고나 런타임 오류가 나면 해당 keep 규칙만 추가한다.
+- Create: `src/dev/mobileax/daemon/Daemon.kt`
 
 **Interfaces:**
 - Produces:
-  - `class MobaxInstrumentation : Instrumentation`
-  - `internal object Daemon { lateinit var ctx: Context; lateinit var ua: UiAutomation; lateinit var instr: Instrumentation }`. 프로세스 전역이고, 이후 Task의 `Shell`과 각 핸들러가 쓴다.
+  - `class MobaxInstrumentation : androidx.test.runner.MonitoringInstrumentation`
+  - `Daemon.kt`의 최상위 선언. 상태를 갖지 않고 `InstrumentationRegistry`에서 읽기만 한다. 이후 Task의 `Shell`과 각 핸들러가 쓴다.
+    - `internal const val UA_FLAGS: Int = UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES`
+    - `internal val instr: Instrumentation get() = InstrumentationRegistry.getInstrumentation()`
+    - `internal val ctx: Context get() = instr.context`
+    - `internal val ua: UiAutomation get() = instr.getUiAutomation(UA_FLAGS)` (같은 플래그면 캐시된 인스턴스가 나온다)
+    - `internal val device: UiDevice by lazy { Configurator.getInstance().uiAutomationFlags = UA_FLAGS; UiDevice.getInstance(instr) }`
   - `Logx.status(line: String)`
   - 인자 `-e port N`(기본 9008)
 - Consumes: `Loop.init()`, `MobaxServer`, `Dispatch`, `Server.Handlers`(`sysCtx` 이름은 `ctx`로 바꾼다)
@@ -157,14 +174,14 @@ git commit -m "docs: instrumentation spike results"
 - [ ] **Step 1: `MobaxInstrumentation` 작성**
 
 - **`onCreate(arguments: Bundle)`** (main 스레드, ActivityThread의 main looper가 이미 돈다):
-  1. `port = arguments.getString("port")?.toInt() ?: 9008`
-  2. `Daemon.instr = this`, `Daemon.ctx = context`
+  1. `super.onCreate(arguments)`. `InstrumentationRegistry`가 이때 등록된다.
+  2. `port = InstrumentationRegistry.getArguments().getString("port")?.toInt() ?: 9008`
   3. `Loop.init()`
   4. `MobaxServer(port, Dispatch(ready, onQuit = { … }))`를 시작한다. `onQuit`은 서버를 닫고 `finish(0, Bundle())`을 부른다.
   5. `Loop.scope.launch { ready.complete(DaemonInit.init()) }`
-- `start()`는 부르지 않는다. `onStart`를 쓰지 않기 때문이다.
+- `start()`는 부르지 않는다. `onStart`를 쓰지 않기 때문이다. Task 1 확인 7이 다른 방식을 정했으면 그 방식을 따른다.
 - **`DaemonInit.init()`** (`withContext(Loop.Work)`):
-  1. `Daemon.ua = getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)`. 현재 `connect(1)`과 같은 플래그다.
+  1. `ua`를 처음 읽어 연결한다(`getUiAutomation(UA_FLAGS)`). 현재 `connect(1)`과 같은 플래그다. 이어서 `device`를 만들어 같은 인스턴스를 쓰게 한다.
   2. `ua.adoptShellPermissionIdentity()`
   3. `ua.setRunAsMonkey(true)`. 실패하면 `Logx.bootWarn`만 남긴다.
   4. `enableInteractiveWindows(ua)`
@@ -177,7 +194,7 @@ git commit -m "docs: instrumentation spike results"
 
 - [ ] **Step 2: `Logx.status` 구현**
 
-`Daemon.instr`가 초기화된 뒤라면 `instr.sendStatus(0, Bundle().apply { putString("mobaxd", line) })`를 부르고, 아니면 `System.err`만 쓴다. `boot`/`bootWarn`/`fatal`이 이를 부른다.
+`InstrumentationRegistry`가 등록된 뒤라면(등록 전에는 `getInstrumentation()`이 예외를 던지므로 잡아서 구분한다) `instr.sendStatus(0, Bundle().apply { putString("mobaxd", line) })`를 부르고, 아니면 `System.err`만 쓴다. `boot`/`bootWarn`/`fatal`이 이를 부른다.
 
 - [ ] **Step 3: 빌드**
 
@@ -229,9 +246,9 @@ git commit -m "daemon: run as an instrumentation (am instrument), UiAutomation f
   - `src/dev/mobileax/daemon/ProcStream.kt`(`runProcess`: `dumpsys`/`logcat`/`monitor`/`shell` 스트림)
 
 **Interfaces:**
-- Consumes: `Daemon.ua`
+- Consumes: `ua`(`Daemon.kt`)
 - Produces:
-  - `internal object Shell`
+  - `internal object Shell`. `UiDevice.executeShellCommand`는 stdout만 주므로 쓰지 않는다. 이 이유를 `Shell.kt` 머리 주석에 남긴다.
   - `fun run(cmd: String, timeoutMs: Long = 10_000): ShellResult`
   - `data class ShellResult(val out: String, val err: String, val exit: Int)`
   - `fun open(cmd: String): ShellProc`. `ShellProc`는 `stdin: ParcelFileDescriptor`, `stdout: ParcelFileDescriptor`, `stderr: ParcelFileDescriptor`를 갖고, `suspend fun exitCode(): Int`, `fun kill()`을 제공한다.
@@ -239,7 +256,7 @@ git commit -m "daemon: run as an instrumentation (am instrument), UiAutomation f
 
 - [ ] **Step 1: `Shell` 구현**
 
-- `open`: `Daemon.ua.executeShellCommandRwe("sh -c '<cmd>; echo $EXIT_MARK$? >&2'")`
+- `open`: `ua.executeShellCommandRwe("sh -c '<cmd>; echo $EXIT_MARK$? >&2'")`
   - `<cmd>`의 작은따옴표는 `'\''`로 이스케이프한다.
   - stderr를 읽을 때 마지막 `EXIT_MARK` 줄을 떼어 종료 코드로 쓰고, 나머지는 그대로 흘려보낸다.
 - `kill`: 세 PFD를 닫는다. 남은 자식 프로세스는 shell 쪽에서 SIGPIPE로 끝난다. 그래도 남는 스트림(`logcat -f` 등)이 있으면 Step 3에서 `pkill -P`를 검토한다.
@@ -343,7 +360,7 @@ Task 1 확인 4와 클립보드 결과에 따라 진행한다. 결과가 "adopt 
 - Modify: `src/dev/mobileax/daemon/Pm.kt`. `list()`가 `ctx.packageName`(`dev.mobileax.daemon`)을 건너뛴다.
 
 **Interfaces:**
-- Consumes: `Shell.run`, `Daemon.ctx`
+- Consumes: `Shell.run`, `ctx`(`Daemon.kt`)
 - Produces: 와이어 변경 없음
 
 - [ ] **Step 1: `Pm.list`에서 자기 패키지 숨기기**
@@ -376,6 +393,46 @@ Expected: 출력 형식이 main 빌드와 같다.
 ```bash
 git add src/dev/mobileax/daemon/
 git commit -m "daemon: shell-only binder paths for an app-uid daemon; hide own package"
+```
+
+---
+
+### Task 5b: androidx.test로 바꿀 수 있는 경로 바꾸기
+
+**Files:**
+- Modify (후보별): `src/dev/mobileax/daemon/Wm.kt`, `src/dev/mobileax/daemon/Gestures.kt`, `src/dev/mobileax/daemon/Server.kt`
+
+**Interfaces:**
+- Consumes: `device`, `ua`, `instr`(`Daemon.kt`)
+- Produces: 와이어 변경 없음
+
+각 후보를 바꾼 뒤 같은 명령을 main 빌드와 비교한다. 결과가 같고 지연이 ±10% 안이면 바꾼 것을 유지한다. 아니면 되돌리고, 코드에 이유를 한 줄 남긴다.
+
+| 후보 | 지금 | androidx.test | 측정 |
+|---|---|---|---|
+| `wm_rotation` | `IWindowManager.freezeRotation` 리플렉션(`Wm.setRotation`) | `UiDevice.freezeRotation()`과 `setOrientation*`. 0~3 회전값을 다 표현할 수 있는지 먼저 확인한다 | 회전 후 `wm_info`의 rotation |
+| `wait_for_idle` | `Gestures.waitForIdle` | `UiDevice.waitForIdle(timeout)` | 같은 화면에서 10회 지연 |
+| `wait_for_text` | `Gestures.waitForText` | `device.wait(Until.hasObject(By.text(...)), timeout)`. 현재 매칭 규칙과 같은 `By` 조합이 있는지 먼저 확인한다 | 나타나는 텍스트·없는 텍스트 각각의 지연과 결과 |
+| `wait_for_activity` | 현재 구현 | `device.currentPackageName`으로 대신할 수 있는 부분만 | 결과 비교 |
+| `info`의 화면 크기 | `h.shot.sourceSize()` | `device.displayWidth`/`displayHeight` | 회전 상태별 값 비교 |
+| 키 이름 → 키 코드 주입 | `Input.keyByName`(`wait=0`) | `device.pressKeyCode` | **유지 예상.** 동기 주입이라 애니메이션을 기다린다. Recents 키 지연으로 확인만 한다 |
+| tap, swipe, 드래그 | `Input` 3-arg 주입 | `device.click`/`swipe`/`drag` | **유지 예상.** 같은 이유. 드래그 지연으로 확인만 한다 |
+| dump | `Dumper` JSON | `device.dumpWindowHierarchy` | **유지.** XML이라 호스트 파서와 맞지 않는다. 측정하지 않는다 |
+
+- [ ] **Step 1: 후보별로 바꾸고 측정**
+
+위 표의 순서대로 한다. 후보마다 결과(바꿈 또는 유지, 측정값)를 이 계획 문서 끝 "androidx.test 대체 결과" 절에 한 줄로 적는다.
+
+- [ ] **Step 2: 기기 확인**
+
+바꾼 후보의 verb와 Task 2 Step 4의 세 명령을 다시 실행한다.
+Expected: main 빌드와 같은 결과.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add src/dev/mobileax/daemon/ docs/superpowers/plans/2026-11-03-daemon-instrumentation.md
+git commit -m "daemon: use UiDevice where it matches the tuned paths"
 ```
 
 ---
