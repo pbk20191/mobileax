@@ -30,9 +30,9 @@ internal suspend fun buildServer(context: Context, ua: UiAutomation): Server {
     h.settings = SettingsApi(context)
     h.wm = Wm(context.getSystemService(DisplayManager::class.java), ua)
     h.uiEvents = UiEvents(ua)
-    h.nodes = NodeActions(ua)
-    h.toasts = Toasts(h.uiEvents)
     h.by = ByEngine(ua, context, h.uiEvents)
+    h.nodes = NodeActions(ua, h.by)
+    h.toasts = Toasts(h.uiEvents)
     h.state = State(context, h.uiEvents)
 
     // Warm the dump path: the first dump_active on a cold VM costs ~1 s.

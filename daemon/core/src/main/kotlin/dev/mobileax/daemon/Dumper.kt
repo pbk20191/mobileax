@@ -79,7 +79,8 @@ class Dumper(private val ua: UiAutomation) {
 
         val root = ua.rootInActiveWindow
         out.key("root")
-        Traverse.writeNode(root, out)
+        val clip = try { root?.window?.let { w -> Rect().also { w.getBoundsInScreen(it) } } } catch (_: Throwable) { null }
+        Traverse.writeNode(root, out, clip)
 
         out.endObj()
         return out.finish()
@@ -105,7 +106,7 @@ class Dumper(private val ua: UiAutomation) {
             // some windows aren't accessible to the shell uid
         }
         out.key("root")
-        Traverse.writeNode(root, out)
+        Traverse.writeNode(root, out, r)
 
         out.endObj()
     }

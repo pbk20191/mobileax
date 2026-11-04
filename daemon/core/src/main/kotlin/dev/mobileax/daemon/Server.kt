@@ -504,12 +504,8 @@ internal class Server(private val h: Handlers) {
         const val DEFAULT_TAP_TIMEOUT_MS: Long = 2000
 
         // ---------- key=value arg helpers ----------
-        fun textSelector(text: String?, mode: String?): NodeActions.Selector {
-            val s = NodeActions.Selector()
-            if ("exact".equals(mode, ignoreCase = true)) s.textExact = text
-            else s.textSub = text
-            return s
-        }
+        fun textSelector(text: String, mode: String?): ByEngine.Query =
+            ByEngine.Query.text(text, exact = "exact".equals(mode, ignoreCase = true))
 
         /** Parse `key=value` from a whitespace-tokenised string.  */
         fun strArg(cmd: String, key: String?): String? {

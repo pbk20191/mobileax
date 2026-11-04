@@ -24,6 +24,11 @@
     code and pid are files in the app's external `files/shell/` directory
     and `executeShellCommand` runs `sh <file>`. `-e shell file` on
     `am instrument` forces the file path.
+- Off-screen nodes: a list keeps a few rows past the screen in the tree. They
+  are in `dump` with `off` (and `mobax find` prints `[off-screen below]`);
+  `wait` and the daemon's node actions (`node_click`, `wait_for_text`, …)
+  treat them as not there yet; `tap` scrolls toward one and taps it. Rows the
+  list hasn't made yet are in no tree: scroll (`scroll: true`, `swipe`).
 - The screenshot mirror is made on demand, not kept up: a mirror
   recomposites every frame the screen changes (SDK 36 while scrolling:
   surfaceflinger about twice the CPU, the emulator ~15% more). Streams make

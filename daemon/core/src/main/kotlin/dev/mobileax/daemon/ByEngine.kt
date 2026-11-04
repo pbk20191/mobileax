@@ -4,6 +4,7 @@ import android.app.Instrumentation
 import android.app.UiAutomation
 import android.content.Context
 import android.graphics.Point
+import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.BySelector
@@ -54,8 +55,9 @@ internal class ByEngine(private val ua: UiAutomation, private val ctx: Context, 
     private val device: UiDevice by lazy {
         Configurator.getInstance().apply {
             uiAutomationFlags = UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES
-            // Every search waits for idle first; an animating screen would hold it 10 s.
-            waitForIdleTimeout = 300
+            // Every search waits for idle first; an animating screen would hold
+            // it 10 s. Settling is ours to do (settle, waits), so don't.
+            waitForIdleTimeout = 0
         }
         UiDevice.getInstance(Shim(ua, ctx)).also { events.reclaim() }   // it took the event listener
     }
@@ -82,6 +84,25 @@ internal class ByEngine(private val ua: UiAutomation, private val ctx: Context, 
     }
 
     // ── search ──────────────────────────────────────────────────────────
+
+    /**
+     * The first node [query] matches (by: syntax, prefix optional; the older
+     * `id=… text="…"` form reads the same), in [scope]: all windows, the
+     * app's, or the active one. Visible nodes only. Throws
+     * IllegalArgumentException for a query it can't read.
+     */
+    fun first(query: String, scope: String = "all"): AccessibilityNodeInfo? = first(Query.parse(query), scope)
+
+    fun first(q: Query, scope: String = "all"): AccessibilityNodeInfo? {
+        val found = when {
+            q.window != null -> find(q).firstOrNull()
+            scope == "app" -> device.findWindows(By.Window.type(AccessibilityWindowInfo.TYPE_APPLICATION))
+                .firstNotNullOfOrNull { it.findObject(q.node) }
+            scope == "active" -> device.findWindows(By.Window.active(true)).firstNotNullOfOrNull { it.findObject(q.node) }
+            else -> device.findObject(q.node)
+        }
+        return try { found?.accessibilityNodeInfo } catch (_: Throwable) { null }
+    }
 
     private fun find(q: Query): List<UiObject2> {
         val w = q.window ?: return device.findObjects(q.node)
@@ -185,7 +206,7 @@ internal class ByEngine(private val ua: UiAutomation, private val ctx: Context, 
         out.beginObj().key("nodes").beginArr()
         for (o in found) {
             val n = try { o.accessibilityNodeInfo } catch (_: Throwable) { null } ?: continue
-            Traverse.writeFieldsOnly(n, out)
+            Traverse.writeFieldsOnly(n, out, o.visibleBounds)
             out.endObj()
         }
         out.endArr().endObj()
@@ -209,6 +230,12 @@ internal class ByEngine(private val ua: UiAutomation, private val ctx: Context, 
 
     class Query(val node: BySelector, val window: ByWindowSelector?, val source: String) {
         companion object {
+            /** Text equal to (or, not [exact], containing) [text]: no quoting to get wrong. */
+            fun text(text: String, exact: Boolean): Query {
+                val v = Pattern.quote(text)
+                return Query(By.text(Pattern.compile(if (exact) v else ".*$v.*", Pattern.DOTALL)), null, "text=$text")
+            }
+
             fun parse(src: String): Query {
                 val s = src.trim().removePrefix("by:").trim()
                 require(s.isNotEmpty()) { "empty query" }
@@ -242,6 +269,7 @@ internal class ByEngine(private val ua: UiAutomation, private val ctx: Context, 
                 return out
             }
 
+            private val CLASS_NAME = Regex("""^[A-Z][\w$]*$|^[a-z]\w*(\.\w+)+$""")
             private val TERM = Regex("""^([a-z]+)(~=|\^=|\$=|=)(.*)$""")
             private val FLAGS = setOf(
                 "clickable", "checkable", "checked", "enabled", "focusable", "focused",
@@ -284,6 +312,12 @@ internal class ByEngine(private val ua: UiAutomation, private val ctx: Context, 
                             "scrollable" -> add({ it.scrollable(v) }, { By.scrollable(v) })
                             "selected" -> add({ it.selected(v) }, { By.selected(v) })
                         }
+                        continue
+                    }
+                    // A bare class name, as in `EditText` or `android.widget.EditText`.
+                    if (CLASS_NAME.matches(t)) {
+                        val p = pattern("class", "=", t)
+                        add({ it.clazz(p) }, { By.clazz(p) })
                         continue
                     }
                     val m = TERM.find(t) ?: throw IllegalArgumentException(

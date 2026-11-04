@@ -212,6 +212,8 @@ pub(crate) fn run_wait_selector(
         let ctx = selector::MatchCtx::from_roots(json::app_roots(&dump).into_iter().rev().collect());
         let mut matches = selector::find_all_with(&ctx, sels);
         selector::apply_filters(&mut matches, f.require());
+        // One off screen hasn't shown up yet.
+        matches.retain(|n| selector::get_str(n, "off").is_none());
         if let Some(n) = matches.first() {
             let elapsed = start.elapsed().as_millis() as i64;
             let (l, t, r, b) = selector::bounds(n).unwrap_or((0, 0, 0, 0));
@@ -318,13 +320,15 @@ pub(crate) fn write_find_row(out: &mut impl Write, n: &json::Value) -> io::Resul
     let id  = selector::get_str(n, "rid").unwrap_or("");
     let t   = selector::get_str(n, "text").unwrap_or("");
     let d   = selector::get_str(n, "desc").unwrap_or("");
-    let bs  = match selector::bounds(n) {
-        Some((x1, y1, x2, y2)) => {
+    // Nothing of it shows: its bounds would be the framework's, cut at one edge.
+    let bs  = match (selector::get_str(n, "off"), selector::bounds(n)) {
+        (Some(off), _) => format!("[off-screen {off}]"),
+        (None, Some((x1, y1, x2, y2))) => {
             let cx = (x1 + x2) / 2;
             let cy = (y1 + y2) / 2;
             format!("[{x1},{y1}][{x2},{y2}] center=({cx},{cy})")
         }
-        None => "[]".into(),
+        (None, None) => "[]".into(),
     };
     write!(out, "{bs}\tclass={cls}\tid={id}\ttext={t:?}\tdesc={d:?}")?;
     for key in ["role", "state", "actions"] {
@@ -342,7 +346,7 @@ pub(crate) fn find_row_obj(n: &json::Value) -> json_out::Obj {
         .s("text",  selector::get_str(n, "text").unwrap_or(""))
         .s("desc",  selector::get_str(n, "desc").unwrap_or(""))
         .s("flags", selector::get_str(n, "flags").unwrap_or(""));
-    for key in ["role", "state", "error", "range", "collection", "item", "actions"] {
+    for key in ["off", "role", "state", "error", "range", "collection", "item", "actions"] {
         o = o.opt_s(key, selector::get_str(n, key));
     }
     if let Some((x1, y1, x2, y2)) = selector::bounds(n) {

@@ -262,7 +262,7 @@ internal class Gestures(private val h: Server.Handlers) {
         val sel = Server.textSelector(text, mode)
         var found: AccessibilityNodeInfo? = null
         val elapsed = waits.awaitPredicate(timeout) {
-            found = withContext(Loop.Work) { h.nodes.find(sel, scope) }
+            found = withContext(Loop.Work) { h.by.first(sel, scope) }
             found != null
         }
         if (elapsed < 0) return Server.errBytes("TIMEOUT:wait_for_text:$text")

@@ -8,25 +8,35 @@ object Traverse {
     private val PREFETCH = resolvePrefetchFlags()
     private val TMP_RECT = Rect()
 
-    /** A node whose `children` array is open; [next] is the next child index to write. */
-    private class Open(val node: AccessibilityNodeInfo, val count: Int, var next: Int = 0)
+    /** A node whose `children` array is open; [next] is the next child index to
+     *  write; [clip] is what its children can show through. */
+    private class Open(val node: AccessibilityNodeInfo, val count: Int, val clip: Rect?, var next: Int = 0)
 
     /**
      * Writes [root] and its subtree depth-first. An explicit stack instead of
      * recursion, so a deep hierarchy can't overflow the thread stack.
+     *
+     * [clip] is the window's rectangle on screen. Each node's `bounds` are
+     * cut to what shows through it and every scrolling ancestor (as Appium's
+     * visible bounds), so a half-hidden row is tapped where it shows. A node
+     * nothing of which shows keeps the framework's bounds (often cut at one
+     * edge only, even inverted) and gets `off`: below, above, left or right.
      */
-    fun writeNode(root: AccessibilityNodeInfo?, out: JsonOut) {
+    fun writeNode(root: AccessibilityNodeInfo?, out: JsonOut, clip: Rect? = null) {
         val open = ArrayDeque<Open>()
         var n: AccessibilityNodeInfo? = root
+        var nClip: Rect? = clip
         while (true) {
             if (n == null) {
                 out.append("null,")
             } else {
-                writeFields(n, out)
+                val shown = writeFields(n, out, nClip)
                 val cc = n.childCount
                 if (cc > 0) {
                     out.key("children").beginArr()
-                    open.addLast(Open(n, cc))
+                    // A scrolling container shows its children only inside itself.
+                    val childClip = if (n.isScrollable && shown != null) shown else nClip
+                    open.addLast(Open(n, cc, childClip))
                 } else {
                     out.endObj()
                 }
@@ -37,6 +47,7 @@ object Traverse {
                 val top = open.last()
                 if (top.next < top.count) {
                     n = getChildSafe(top.node, top.next++)
+                    nClip = top.clip
                     advanced = true
                     break
                 }
@@ -48,11 +59,16 @@ object Traverse {
         }
     }
 
-    /** One node's fields, in an object left open (the caller closes it). */
-    fun writeFieldsOnly(n: AccessibilityNodeInfo, out: JsonOut) = writeFields(n, out)
+    /** One node's fields with [shown] as its bounds, in an object left open (the caller closes it). */
+    fun writeFieldsOnly(n: AccessibilityNodeInfo, out: JsonOut, shown: Rect) {
+        writeFields(n, out, null, shown)
+    }
 
-    /** Opens the node's object and writes its own fields (not children). */
-    private fun writeFields(n: AccessibilityNodeInfo, out: JsonOut) {
+    /**
+     * Opens the node's object and writes its own fields (not children).
+     * Returns the part of it that shows through [clip] (null: none).
+     */
+    private fun writeFields(n: AccessibilityNodeInfo, out: JsonOut, clip: Rect?, given: Rect? = null): Rect? {
         out.beginObj()
 
         val cls = n.className
@@ -63,6 +79,9 @@ object Traverse {
 
         val rid = n.viewIdResourceName
         if (rid != null && rid.isNotEmpty()) out.str("rid", rid)
+        // Compose's testTag, where the app didn't make it the resource id
+        // (testTagsAsResourceId): the steadiest handle a Compose node has.
+        else n.extras?.getCharSequence(COMPOSE_TEST_TAG)?.let { if (it.isNotEmpty()) out.str("rid", it) }
 
         val text = n.getText()
         if (text != null && text.isNotEmpty()) out.str("text", text)
@@ -75,7 +94,20 @@ object Traverse {
 
         val b = TMP_RECT
         n.getBoundsInScreen(b)
-        out.rect("bounds", b.left, b.top, b.right, b.bottom)
+        var shown: Rect? = given ?: Rect(b)
+        if (given == null && clip != null && !shown!!.intersect(clip)) shown = null
+        if (shown != null) {
+            out.rect("bounds", shown.left, shown.top, shown.right, shown.bottom)
+        } else {
+            out.rect("bounds", b.left, b.top, b.right, b.bottom)
+            val c = clip!!
+            out.str("off", when {
+                b.top >= c.bottom -> "below"
+                b.bottom <= c.top -> "above"
+                b.left >= c.right -> "right"
+                else -> "left"
+            })
+        }
 
         val flags = StringBuilder(8)
         if (n.isClickable) flags.append('c')
@@ -105,7 +137,11 @@ object Traverse {
         n.collectionItemInfo?.let { out.str("item", "${it.rowIndex},${it.columnIndex}") }
         val actions = actionsOf(n)
         if (actions.isNotEmpty()) out.str("actions", actions)
+        return shown
     }
+
+    /** Compose's semantics testTag in a node's extras. */
+    private const val COMPOSE_TEST_TAG = "androidx.compose.ui.semantics.testTag"
 
     /** androidx's key for a role description; Compose sets it for Role.Switch, Role.Tab, … */
     private const val ROLE_DESCRIPTION = "AccessibilityNodeInfo.roleDescription"

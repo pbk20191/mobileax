@@ -25,6 +25,12 @@ dump             [display=N]                          full JSON dump, every wind
 dump_active                                           active window only
 ```
 
+A node's `bounds` are the part of it that shows: cut to its window and to
+every scrolling ancestor, so a half-hidden row's centre is on screen. A node
+nothing of which shows keeps the framework's bounds (often cut at one edge,
+even inverted) and has `off`: `below`, `above`, `left` or `right`. A Compose
+node with no resource id but a `testTag` reports the tag as `rid`.
+
 ## Capture — screenshots and streams
 
 `screenshot` returns one frame; the `stream_*` verbs hold the socket
@@ -127,8 +133,9 @@ state_watch                                            chunked JSON frames
 
 ## Node actions — AccessibilityNodeInfo
 
-`<selector>` uses the same CSS-like syntax as `mobax find`:
-`Tag[attr=val][attr~=sub]:flag`, comma = OR.
+`<selector>` is a by: query without the prefix (see By queries below),
+which also reads the older form: `id=com.app:id/x text="Sign in"`,
+`desc~=menu`, `class=EditText` or a bare `EditText`. Visible nodes only.
 
 ```
 node_click       <selector>

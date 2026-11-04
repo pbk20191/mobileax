@@ -1161,6 +1161,10 @@ fn call_tool(name: &str, args: &Value, engine: &Engine, device: Option<&str>, br
                         }
                         match find_bounds(&text) {
                             Some(b) if ok => Some(b),
+                            _ if ok && text.starts_with("[off-screen") => return Ok(Out::Text((false, format!(
+                                "ERR:NOT_FOUND:{} — scroll it into view first (swipe, or tap/find with scroll)",
+                                text.lines().next().unwrap_or("").split('\t').next().unwrap_or("")
+                            )))),
                             _ => return Ok(Out::Text((false, text))),
                         }
                     }
