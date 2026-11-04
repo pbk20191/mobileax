@@ -36,15 +36,24 @@ internal class Gestures(private val h: Server.Handlers) {
 
     // ── gestures ────────────────────────────────────────────────────────
 
-    private suspend fun motion(down: Long, at: Long, action: Int, x: Int, y: Int, sync: Boolean = true) =
-        withContext(Loop.Work) { h.input.motion(down, at, action, x, y, sync) }
+    private suspend fun motion(down: Long, at: Long, action: Int, x: Int, y: Int, sync: Boolean = true, display: Int = 0) =
+        withContext(Loop.Work) { h.input.motion(down, at, action, x, y, sync, display) }
+
+    /** The size of [display] as it is turned now (0: the default display). */
+    private fun displaySize(display: Int): android.graphics.Point {
+        if (display == 0) return h.shot.sourceSize()
+        val p = android.graphics.Point()
+        @Suppress("DEPRECATION")
+        h.sysCtx.getSystemService(android.hardware.display.DisplayManager::class.java).getDisplay(display)?.getRealSize(p)
+        return p
+    }
 
     /** Down, one 60 Hz frame, up — reads as a real tap to gesture detectors. */
-    suspend fun tap(x: Int, y: Int) {
+    suspend fun tap(x: Int, y: Int, display: Int = 0) {
         val t = SystemClock.uptimeMillis()
-        motion(t, t, MotionEvent.ACTION_DOWN, x, y)
+        motion(t, t, MotionEvent.ACTION_DOWN, x, y, display = display)
         delay(16.milliseconds)
-        motion(t, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y)
+        motion(t, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y, display = display)
     }
 
     /**
@@ -61,7 +70,8 @@ internal class Gestures(private val h: Server.Handlers) {
     private suspend fun pinch(cmd: String): ByteArray {
         val dir = Server.positional(cmd) ?: return Server.errBytes("BAD_ARG:pinch-needs-in-or-out")
         if (dir != "in" && dir != "out") return Server.errBytes("BAD_ARG:pinch-needs-in-or-out")
-        val sz = h.shot.sourceSize()
+        val display = Server.longArg(cmd, "display", 0).toInt()
+        val sz = displaySize(display)
         if (sz.x <= 0 || sz.y <= 0) return Server.errBytes("pinch-no-display-size")
         val cx = Server.longArg(cmd, "x", (sz.x / 2).toLong()).toInt()
         val cy = Server.longArg(cmd, "y", (sz.y / 2).toLong()).toInt()
@@ -73,8 +83,8 @@ internal class Gestures(private val h: Server.Handlers) {
         val t0 = SystemClock.uptimeMillis()
         val (sx, sy) = at(from)
         withContext(Loop.Work) {
-            h.input.motion(t0, t0, MotionEvent.ACTION_DOWN, sx[0], sy[0])
-            h.input.multiMotion(t0, t0, MotionEvent.ACTION_POINTER_DOWN or (1 shl shift), sx, sy)
+            h.input.motion(t0, t0, MotionEvent.ACTION_DOWN, sx[0], sy[0], display = display)
+            h.input.multiMotion(t0, t0, MotionEvent.ACTION_POINTER_DOWN or (1 shl shift), sx, sy, display = display)
         }
         var now: Long
         var last = at(from)
@@ -82,28 +92,28 @@ internal class Gestures(private val h: Server.Handlers) {
             now = maxOf(Frames.next(), t0 + 1)
             val f = minOf(1f, (now - t0).toFloat() / durMs)
             last = at((from + (to - from) * f).roundToInt())
-            withContext(Loop.Work) { h.input.multiMotion(t0, now, MotionEvent.ACTION_MOVE, last.first, last.second) }
+            withContext(Loop.Work) { h.input.multiMotion(t0, now, MotionEvent.ACTION_MOVE, last.first, last.second, display = display) }
         } while (now - t0 < durMs)
         withContext(Loop.Work) {
-            h.input.multiMotion(t0, now, MotionEvent.ACTION_POINTER_UP or (1 shl shift), last.first, last.second)
-            h.input.motion(t0, now, MotionEvent.ACTION_UP, last.first[0], last.second[0])
+            h.input.multiMotion(t0, now, MotionEvent.ACTION_POINTER_UP or (1 shl shift), last.first, last.second, display = display)
+            h.input.motion(t0, now, MotionEvent.ACTION_UP, last.first[0], last.second[0], display = display)
         }
         return utf8("ok pinch=$dir x=$cx y=$cy span=$span dur=$durMs")
     }
 
-    suspend fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durMs0: Int, sync: Boolean = true) {
+    suspend fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durMs0: Int, sync: Boolean = true, display: Int = 0) {
         val durMs = if (durMs0 <= 0) 500 else durMs0
         val t0 = SystemClock.uptimeMillis()
-        motion(t0, t0, MotionEvent.ACTION_DOWN, x1, y1, sync)
+        motion(t0, t0, MotionEvent.ACTION_DOWN, x1, y1, sync, display)
         var at: Long
         do {
             at = maxOf(Frames.next(), t0 + 1)
             val f = minOf(1f, (at - t0).toFloat() / durMs)
             motion(t0, at, MotionEvent.ACTION_MOVE, (x1 + (x2 - x1) * f).roundToInt(),
-                (y1 + (y2 - y1) * f).roundToInt(), sync
+                (y1 + (y2 - y1) * f).roundToInt(), sync, display
             )
         } while (at - t0 < durMs)
-        motion(t0, at, MotionEvent.ACTION_UP, x2, y2, sync)
+        motion(t0, at, MotionEvent.ACTION_UP, x2, y2, sync, display)
     }
 
     private suspend fun input(head: String, cmd: String): ByteArray = try {
@@ -116,12 +126,12 @@ internal class Gestures(private val h: Server.Handlers) {
             when (head) {
                 "tap" -> {
                     // Off-screen taps dispatch into nothing yet would report ok.
-                    val sz = h.shot.sourceSize()
+                    val sz = displaySize(a.display)
                     if (sz.x > 0 && sz.y > 0 && (a.x < 0 || a.x >= sz.x || a.y < 0 || a.y >= sz.y)) {
                         Server.errBytes("OFF_SCREEN:x=${a.x} y=${a.y} display=${sz.x}x${sz.y}")
-                    } else { tap(a.x, a.y); OK }
+                    } else { tap(a.x, a.y, a.display); OK }
                 }
-                "swipe" -> { swipe(a.x1, a.y1, a.x2, a.y2, if (a.dur > 0) a.dur else 300); OK }
+                "swipe" -> { swipe(a.x1, a.y1, a.x2, a.y2, if (a.dur > 0) a.dur else 300, display = a.display); OK }
                 "down" -> { h.input.pointerDown(a.x, a.y); OK }
                 "move" -> { h.input.pointerMove(a.x, a.y); OK }
                 "up" -> { h.input.pointerUp(a.x, a.y); OK }
@@ -147,7 +157,8 @@ internal class Gestures(private val h: Server.Handlers) {
         val dir = Server.positional(cmd) ?: return Server.errBytes("swipe_dir-needs-direction")
         // 500 ms over 60% of the screen reads as a deliberate drag; dur=N for flings.
         val dur = Server.longArg(cmd, "dur", 500).toInt()
-        val sz = h.shot.sourceSize()
+        val display = Server.longArg(cmd, "display", 0).toInt()
+        val sz = displaySize(display)
         val w = sz.x
         val ht = sz.y
         if (w <= 0 || ht <= 0) return Server.errBytes("swipe_dir-no-display-size")
@@ -164,7 +175,7 @@ internal class Gestures(private val h: Server.Handlers) {
             else -> return Server.errBytes("swipe_dir-bad-direction:$dir")
         }
         return try {
-            swipe(x1, y1, x2, y2, dur)
+            swipe(x1, y1, x2, y2, dur, display = display)
             utf8("ok dir=$d x1=$x1 y1=$y1 x2=$x2 y2=$y2 dur=$dur")
         } catch (t: Throwable) {
             if (t is kotlinx.coroutines.CancellationException) throw t

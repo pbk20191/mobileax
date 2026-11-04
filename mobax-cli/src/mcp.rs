@@ -60,7 +60,9 @@ shows a new screen.\n\
 \n\
 Every tool takes an optional `device` (adb serial; default: the one `use` \
 connected). `observe: false` skips an action's settle and reply. \
-`timeout_ms` defaults to 10000.\n\
+`timeout_ms` defaults to 10000. `display` (an id, 0 = main) aims `ui`, \
+`open`, `swipe` and x,y `tap` at another display; there, tap by the x,y \
+`ui` lists.\n\
 \n\
 When you already know several steps (tap a field, fill it, press enter, wait for \
 the result), send them as one `batch`: one call instead of one per step.\n\
@@ -642,6 +644,28 @@ impl Engine {
         (true, format!("{} · {} rows\n{}", screen.title(), screen.len(), screen.table().trim_end()))
     }
 
+    /// Another display's rows. Not remembered: @N refs stay the main display's.
+    fn ui_on(&self, device: Option<&str>, display: i64) -> Reply {
+        let t = match self.target(device) {
+            Ok(t) => t,
+            Err(e) => return (false, e),
+        };
+        let mut sess = match self.checkout(&t) {
+            Ok(s) => s,
+            Err(e) => return (false, e),
+        };
+        let dump = sess.conn.call(&format!("dump display={display}")).and_then(|b| parse_dump(&b));
+        self.checkin(&t, sess);
+        match dump {
+            Ok(d) => {
+                let screen = Screen::from_dump(&d, None);
+                (true, format!("display {display} · {} · {} rows (tap by x,y with display={display})\n{}",
+                    screen.title(), screen.len(), screen.table().trim_end()))
+            }
+            Err(e) => (false, format!("ERR:DAEMON_ERROR:{e}")),
+        }
+    }
+
     /// Reads the screen now and remembers it (refs carried over).
     fn reread(&self, t: &Target) -> Result<(), String> {
         let mut sess = self.checkout(t)?;
@@ -883,6 +907,7 @@ struct Tool {
 const DEVICE: &str = r#""device":{"type":"string"}"#;
 const TIMEOUT: &str = r#""timeout_ms":{"type":"integer"}"#;
 const OBSERVE: &str = r#""observe":{"type":"boolean"}"#;
+const DISPLAY: &str = r#""display":{"type":"integer"}"#;
 const SCROLL: &str = r#""scroll":{"type":"boolean","description":"page the biggest list until the target shows"}"#;
 
 /// The tool list, built once (its schemas are leaked strings).
@@ -927,7 +952,7 @@ fn build_tools() -> Vec<Tool> {
         Tool {
             name: "ui",
             description: "The screen as @N rows. The main way to read it.",
-            schema: obj(&[r#""scope":{"type":"string","enum":["app","active","all"],"description":"app (default): app windows and dialogs; active: focused window; all: system windows too"}"#, DEVICE], &[]),
+            schema: obj(&[r#""scope":{"type":"string","enum":["app","active","all"],"description":"app (default): app windows and dialogs; active: focused window; all: system windows too"}"#, DISPLAY, DEVICE], &[]),
         },
         Tool {
             name: "screenshot",
@@ -942,7 +967,7 @@ fn build_tools() -> Vec<Tool> {
         Tool {
             name: "tap",
             description: "Tap a target (@N, text, #resource_id, selector) or x,y.",
-            schema: obj(&[r#""target":{"type":"string"}"#, SCROLL, r#""x":{"type":"integer"}"#, r#""y":{"type":"integer"}"#, TIMEOUT, OBSERVE, DEVICE], &[]),
+            schema: obj(&[r#""target":{"type":"string"}"#, SCROLL, r#""x":{"type":"integer"}"#, r#""y":{"type":"integer"}"#, DISPLAY, TIMEOUT, OBSERVE, DEVICE], &[]),
         },
         Tool {
             name: "type",
@@ -957,7 +982,7 @@ fn build_tools() -> Vec<Tool> {
         Tool {
             name: "swipe",
             description: "Swipe the finger this way (up scrolls content down), or pinch two fingers `out` (zoom in) or `in` around x,y (default: centre).",
-            schema: obj(&[r#""direction":{"type":"string","enum":["up","down","left","right"]}"#, r#""pinch":{"type":"string","enum":["in","out"]}"#, r#""x":{"type":"integer"}"#, r#""y":{"type":"integer"}"#, r#""duration_ms":{"type":"integer"}"#, OBSERVE, DEVICE], &[]),
+            schema: obj(&[r#""direction":{"type":"string","enum":["up","down","left","right"]}"#, r#""pinch":{"type":"string","enum":["in","out"]}"#, r#""x":{"type":"integer"}"#, r#""y":{"type":"integer"}"#, r#""duration_ms":{"type":"integer"}"#, DISPLAY, OBSERVE, DEVICE], &[]),
         },
         Tool {
             name: "go",
@@ -985,7 +1010,7 @@ fn build_tools() -> Vec<Tool> {
         Tool {
             name: "open",
             description: "Launch an app: package, PKG/.Activity, or label.",
-            schema: obj(&[r#""app":{"type":"string"}"#, OBSERVE, DEVICE], &["app"]),
+            schema: obj(&[r#""app":{"type":"string"}"#, DISPLAY, OBSERVE, DEVICE], &["app"]),
         },
         Tool {
             name: "close",
@@ -1075,7 +1100,9 @@ fn call_tool(name: &str, args: &Value, engine: &Engine, device: Option<&str>, br
         return Err((-32602, format!("{name}: unknown argument \"{k}\"; it takes {}", known.join(", "))));
     }
     // Actions report what changed unless the caller opts out.
-    let observe = !matches!(json::obj_get(args, "observe"), Some(Value::Bool(false)));
+    // The settle and change reply watch the main display: off for another one.
+    let observe = !matches!(json::obj_get(args, "observe"), Some(Value::Bool(false)))
+        && n("display").is_none_or(|d| d == 0);
     let device = s("device").or_else(|| device.map(str::to_string));
     let dev = device.as_deref();
 
@@ -1096,6 +1123,9 @@ fn call_tool(name: &str, args: &Value, engine: &Engine, device: Option<&str>, br
         "drop" => {
             argv.push("drop".into());
             Via::Child
+        }
+        "ui" if n("display").is_some_and(|d| d != 0) && engine.in_process() => {
+            return Ok(Out::Text(engine.ui_on(dev, n("display").unwrap_or(0))));
         }
         "ui" => match s("scope").as_deref() {
             Some("active") => {
@@ -1154,6 +1184,13 @@ fn call_tool(name: &str, args: &Value, engine: &Engine, device: Option<&str>, br
             timeout(&mut argv);
             Via::Run
         }
+        "tap" if n("display").is_some_and(|d| d != 0) => {
+            let (Some(x), Some(y)) = (n("x"), n("y")) else {
+                return Err((-32602, "tap: on another display give x, y (from `ui` with that display)".into()));
+            };
+            argv.extend(["do".into(), format!("tap x={x} y={y} display={}", n("display").unwrap_or(0))]);
+            Via::Act
+        }
         "tap" => {
             argv.push("tap".into());
             match (s("target"), n("x"), n("y")) {
@@ -1187,10 +1224,18 @@ fn call_tool(name: &str, args: &Value, engine: &Engine, device: Option<&str>, br
             Via::Act
         }
         "swipe" => {
+            let display = n("display").filter(|d| *d != 0);
             match (s("pinch"), s("direction")) {
                 (Some(p), _) => {
-                    let wire = pinch_wire(&p, n("x"), n("y")).map_err(|e| (-32602, e))?;
+                    let mut wire = pinch_wire(&p, n("x"), n("y")).map_err(|e| (-32602, e))?;
+                    if let Some(d) = display {
+                        wire.push_str(&format!(" display={d}"));
+                    }
                     argv.extend(["do".into(), wire]);
+                }
+                (None, Some(d)) if display.is_some() => {
+                    let dur = n("duration_ms").map(|t| format!(" dur={t}")).unwrap_or_default();
+                    argv.extend(["do".into(), format!("swipe_dir {d} display={}{dur}", display.unwrap_or(0))]);
                 }
                 (None, Some(d)) => {
                     argv.extend(["swipe".into(), d]);
@@ -1217,7 +1262,11 @@ fn call_tool(name: &str, args: &Value, engine: &Engine, device: Option<&str>, br
             return Ok(Out::Text(engine.watch(dev, s("until").as_deref(), timeout)));
         }
         "open" => {
-            argv.extend(["open".into(), need("app")?]);
+            match n("display").filter(|d| *d != 0) {
+                // Package or PKG/.Activity (a label with spaces can't ride the wire).
+                Some(d) => argv.extend(["do".into(), format!("am_start n={} display={d}", need("app")?)]),
+                None => argv.extend(["open".into(), need("app")?]),
+            }
             Via::Act
         }
         "close" => {
@@ -1922,6 +1971,17 @@ mod tests {
         assert_eq!(pinch_wire("out", Some(540), Some(1200)).as_deref(), Ok("pinch out x=540 y=1200"));
         assert_eq!(pinch_wire("in", None, None).as_deref(), Ok("pinch in"));
         assert!(pinch_wire("sideways", None, None).is_err());
+    }
+
+    #[test]
+    fn ui_tap_swipe_and_open_take_a_display() {
+        for name in ["ui", "tap", "swipe", "open"] {
+            let t = super::tools().iter().find(|t| t.name == name).unwrap();
+            assert!(t.schema.contains(r#""display""#), "{name}");
+        }
+        // Another display: tap by x,y (rows and text are the default display's).
+        let r = handle(r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"tap","arguments":{"target":"OK","display":2}}}"#, &Engine::new(&[])).unwrap();
+        assert!(r.contains("-32602") && r.contains("x, y"), "{r}");
     }
 
     #[test]
