@@ -11,7 +11,6 @@ import android.graphics.PixelFormat
 import android.graphics.Point
 import android.hardware.HardwareBuffer
 import android.hardware.display.DisplayManager
-import android.hardware.display.VirtualDisplay
 import android.media.Image
 import android.media.ImageReader
 import android.os.Build
@@ -99,6 +98,7 @@ internal class Screenshot(private val ua: UiAutomation) {
     }
 
     suspend fun capture(args: CaptureArgs): ByteArray {
+        args.rect?.let { return captureRegion(it, args) }
         val longEdge = resolveLongEdge(args)
         val quality: Int = clampQuality(args.quality)
         val png: Boolean = isPng(args.format)
@@ -128,11 +128,39 @@ internal class Screenshot(private val ua: UiAutomation) {
         return result
     }
 
+    /**
+     * One element: cut from a native-size frame so a small element keeps its
+     * pixels, then scaled to fit [CaptureArgs.longEdge].
+     */
+    private suspend fun captureRegion(rect: android.graphics.Rect, args: CaptureArgs): ByteArray {
+        val fit = if (args.longEdge > 0) args.longEdge else 768
+        val quality = clampQuality(args.quality)
+        return try {
+            if (mirrorAvailable) {
+                val screen = displayManager?.let { MirrorDisplay.currentSize(it) }?.takeIf { it.x > 0 } ?: sourceSize
+                mirrorAt(max(sourceSize.x, sourceSize.y)).encodeRegion(rect, screen.x, screen.y, fit, args.format, quality)
+            } else withContext(Loop.Work) {
+                val full = ua.takeScreenshot() ?: return@withContext "ERR:screenshot-null".toByteArray()
+                try { encodeRegion(full, full.width, full.height, rect, full.width, full.height, fit, args.format, quality) }
+                finally { full.recycle() }
+            }
+        } catch (t: Throwable) {
+            ("ERR:screenshot-failed:" + t.javaClass.simpleName + ":" + t.message).toByteArray()
+        }
+    }
+
     private suspend fun mirrorCapture(longEdge: Int, quality: Int, format: String?): ByteArray =
         mirrorAt(longEdge).encodeLatest(format, quality)
 
     private suspend fun mirrorAt(longEdge: Int): Mirror = mirrorsMutex.withLock {
-        mirrors[longEdge] ?: Mirror.create(displayManager!!, sourceSize, longEdge).also { mirrors[longEdge] = it }
+        val dm = displayManager!!
+        val have = mirrors[longEdge]
+        // A SurfaceControl mirror is fixed to the orientation it was made in.
+        if (have != null && have.display.viaSurfaceControl && have.display.rotation != MirrorDisplay.currentRotation(dm)) {
+            mirrors.remove(longEdge)
+            have.close()
+        }
+        mirrors[longEdge] ?: Mirror.create(dm, sourceSize, longEdge).also { mirrors[longEdge] = it }
     }
 
     private fun fallbackCapture(longEdge: Int, quality: Int, format: String?): ByteArray {
@@ -180,6 +208,8 @@ internal class Screenshot(private val ua: UiAutomation) {
         var tile: Int = 0 // 0 = default (128 for stream_tilejpeg)
         var gopSec: Int = 0 // 0 = default (1 for stream_h264)
         var secureCheck: Boolean = false
+        /** Only this screen rectangle (an element), at most [longEdge] (default 768) on its long side. */
+        var rect: android.graphics.Rect? = null
     }
 
     // ---- streaming hook ----
@@ -202,7 +232,7 @@ internal class Screenshot(private val ua: UiAutomation) {
     // ---- mirror pipeline ----
     internal class Mirror private constructor(
         val reader: ImageReader,
-        val vd: VirtualDisplay,
+        val display: MirrorDisplay,
         @JvmField val outW: Int,
         @JvmField val outH: Int
     ) {
@@ -249,6 +279,17 @@ internal class Screenshot(private val ua: UiAutomation) {
         suspend fun encodeLatest(format: String?, quality: Int): ByteArray {
             refresh()
             return frameMutex.withLock { encodeCached(format, quality) }
+        }
+
+        /** The latest frame's part under screen rectangle [rect] of a [screenW]×[screenH] screen. */
+        suspend fun encodeRegion(rect: android.graphics.Rect, screenW: Int, screenH: Int, fit: Int, format: String?, quality: Int): ByteArray {
+            refresh()
+            return frameMutex.withLock {
+                withContext(Loop.Work) {
+                    val c = checkNotNull(cached) { "no frame yet" }
+                    encodeRegion(c, outW, outH, rect, screenW, screenH, fit, format, quality)
+                }
+            }
         }
 
         private suspend fun encodeCached(format: String?, quality: Int): ByteArray =
@@ -410,10 +451,7 @@ internal class Screenshot(private val ua: UiAutomation) {
                 reader.setOnImageAvailableListener(null, null)
             } catch (_: Throwable) {
             }
-            try {
-                vd.release()
-            } catch (_: Throwable) {
-            }
+            display.close()
             try {
                 reader.close()
             } catch (_: Throwable) {
@@ -430,16 +468,11 @@ internal class Screenshot(private val ua: UiAutomation) {
 
         companion object {
             suspend fun create(dm: DisplayManager, sourceSize: Point, targetLongEdge: Int): Mirror {
-                var srcW = sourceSize.x
-                var srcH = sourceSize.y
-                if (srcW <= 0 || srcH <= 0) {
-                    val d = dm.getDisplay(Display.DEFAULT_DISPLAY)
-                    val p = Point()
-                    @Suppress("DEPRECATION") // WindowMetrics needs API 30 and a window context
-                    d.getRealSize(p)
-                    srcW = p.x
-                    srcH = p.y
-                }
+                // The display as it is turned now: a SurfaceControl mirror
+                // (SDK < 34) keeps this orientation, see mirrorAt.
+                val now = MirrorDisplay.currentSize(dm)
+                val srcW = if (now.x > 0) now.x else sourceSize.x
+                val srcH = if (now.y > 0) now.y else sourceSize.y
 
                 val longEdge = max(srcW, srcH)
                 var scale = targetLongEdge.toFloat() / longEdge
@@ -452,13 +485,6 @@ internal class Screenshot(private val ua: UiAutomation) {
                     ImageReader.newInstance(outW, outH, PixelFormat.RGBA_8888, 3,
                         HardwareBuffer.USAGE_CPU_READ_OFTEN or HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE)
                 else ImageReader.newInstance(outW, outH, PixelFormat.RGBA_8888, 3)
-                val flags: Int = try {
-                    DisplayManager::class.java.getDeclaredField("VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR")
-                        .getInt(null)
-                } catch (_: Throwable) {
-                    16
-                }
-
                 // Frame-available callbacks arrive on the main looper; the pixel
                 // copy (blocks on the GPU fence) runs on the Work pool.
                 val handler = mainHandler
@@ -471,18 +497,14 @@ internal class Screenshot(private val ua: UiAutomation) {
                     mr?.onImageAvailable()
                 }, handler)
 
-                val vd = withContext(Loop.Blocking) {
-                    dm.createVirtualDisplay(
-                        "mobax-mirror-" + outW + "x" + outH, outW, outH, 320,
-                        reader.surface, flags
-                    )
-                }
-                if (vd == null) {
+                val display = try {
+                    withContext(Loop.Blocking) { MirrorDisplay.open(dm, "mobax-mirror-${outW}x$outH", outW, outH, reader.surface) }
+                } catch (t: Throwable) {
                     reader.close()
-                    throw RuntimeException("createVirtualDisplay returned null")
+                    throw t
                 }
 
-                val m = Mirror(reader, vd, outW, outH)
+                val m = Mirror(reader, display, outW, outH)
                 holder[0] = m
 
                 // Wait up to 1500 ms for the first frame so the very first capture
@@ -588,6 +610,36 @@ internal class Screenshot(private val ua: UiAutomation) {
                 if (token == tok) return true
             }
             return false
+        }
+
+        /**
+         * [rect] in screen coordinates cut from [frame] (its first [frameW]×[frameH]
+         * pixels show the [screenW]×[screenH] screen), scaled down to [fit] on
+         * its long side, encoded.
+         */
+        fun encodeRegion(
+            frame: Bitmap, frameW: Int, frameH: Int, rect: android.graphics.Rect,
+            screenW: Int, screenH: Int, fit: Int, format: String?, quality: Int,
+        ): ByteArray {
+            val sx = frameW.toFloat() / screenW.coerceAtLeast(1)
+            val sy = frameH.toFloat() / screenH.coerceAtLeast(1)
+            val l = (rect.left * sx).roundToInt().coerceIn(0, frameW)
+            val t = (rect.top * sy).roundToInt().coerceIn(0, frameH)
+            val r = (rect.right * sx).roundToInt().coerceIn(0, frameW)
+            val b = (rect.bottom * sy).roundToInt().coerceIn(0, frameH)
+            require(r > l && b > t) { "region off screen: $rect" }
+            val part = Bitmap.createBitmap(frame, l, t, r - l, b - t)
+            val long = max(part.width, part.height)
+            val out = if (long > fit) {
+                val s = fit.toFloat() / long
+                Bitmap.createScaledBitmap(part, max(1, (part.width * s).roundToInt()), max(1, (part.height * s).roundToInt()), true)
+            } else part
+            try {
+                return encode(out, format, quality)
+            } finally {
+                if (out !== part) out.recycle()
+                part.recycle()
+            }
         }
 
         private fun encode(bmp: Bitmap, format: String?, quality: Int): ByteArray {

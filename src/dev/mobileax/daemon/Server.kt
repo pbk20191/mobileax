@@ -28,6 +28,7 @@ internal class Server(private val h: Handlers) {
         lateinit var state: State
         lateinit var uiEvents: UiEvents
         lateinit var nodes: NodeActions
+        lateinit var toasts: Toasts
     }
 
     fun handlers(): Handlers {
@@ -61,6 +62,8 @@ internal class Server(private val h: Handlers) {
             "node_long_click" -> return runNodeClick(cmd, true)
             "node_set_text" -> return runNodeSetText(cmd)
             "node_scroll" -> return runNodeScroll(cmd)
+            "scroll_forward" -> return h.nodes.scrollForward()
+            "toasts" -> return h.toasts.since(cmd)
             "node_focus" -> return runNodeFocus(cmd)
             "submit" -> return runSubmit(cmd)
             "paste" -> return runPaste(cmd)
@@ -100,7 +103,11 @@ internal class Server(private val h: Handlers) {
     /** dump / dump_active / screenshot: suspend, they wait on the dumper or the mirror. */
     suspend fun capture(head: String, cmd: String): ByteArray = try {
         when (head) {
-            "dump" -> { waitOutTransition(); utf8(h.dumper.dumpAll()) }
+            "dump" -> {
+                val display = longArg(cmd, "display", 0).toInt()
+                if (display == 0) waitOutTransition()
+                utf8(h.dumper.dumpAll(display))
+            }
             "dump_active" -> { waitOutTransition(); utf8(h.dumper.dumpActive()) }
             else -> h.shot.capture(parseScreenshotArgs(cmd))
         }
@@ -120,6 +127,8 @@ internal class Server(private val h: Handlers) {
         var x2: Int = 0
         var y2: Int = 0
         var dur: Int = 0
+        /** Another display's id (0: the default one). */
+        var display: Int = 0
         var dy: Int = 0
         var code: Int = 0
         var keyName: String? = null
@@ -146,7 +155,7 @@ internal class Server(private val h: Handlers) {
     private fun runAmStart(cmd: String): ByteArray {
         val a: AmArgs = parseAmArgs(cmd)
         if (a.component == null) return errBytes("am_start-needs-n=pkg/.Class")
-        return h.am.start(a.component, a.action, a.data, a.flags)
+        return h.am.start(a.component, a.action, a.data, a.flags, a.display)
     }
 
     private fun runAmForceStop(cmd: String): ByteArray {
@@ -184,6 +193,7 @@ internal class Server(private val h: Handlers) {
         var action: String? = null
         var data: String? = null
         var flags: Int = 0
+        var display: Int = 0
     }
 
     // ---------- second-wave command handlers ----------
@@ -361,6 +371,7 @@ internal class Server(private val h: Handlers) {
                         "x2" -> a.x2 = v.toInt()
                         "y2" -> a.y2 = v.toInt()
                         "dur" -> a.dur = v.toInt()
+                        "display" -> a.display = v.toInt()
                         "dy" -> a.dy = v.toInt()
                         "code" -> a.code = v.toInt()
                         "wait" -> a.wait = v != "0"
@@ -394,6 +405,11 @@ internal class Server(private val h: Handlers) {
                 try {
                     when (k) {
                         "size" -> a.longEdge = v.toInt()
+                        "rect" -> {
+                            val n = v.split(',').map { it.trim().toInt() }
+                            require(n.size == 4) { "rect=l,t,r,b" }
+                            a.rect = android.graphics.Rect(n[0], n[1], n[2], n[3])
+                        }
                         "q", "quality" -> a.quality = v.toInt()
                         "fmt", "format" -> a.format = v
                         "max" -> a.max = "0" != v && !"false".equals(v, ignoreCase = true)
@@ -465,6 +481,7 @@ internal class Server(private val h: Handlers) {
                         "a" -> a.action = v
                         "d" -> a.data = v
                         "f" -> a.flags = Integer.decode(v)
+                        "display" -> a.display = v.toInt()
                         else -> {}
                     }
                 } catch (_: NumberFormatException) {

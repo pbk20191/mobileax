@@ -20,7 +20,7 @@ quit                                                  → bye   (daemon exits)
 ## Inspect — accessibility tree
 
 ```
-dump                                                  full JSON dump, every window
+dump             [display=N]                          full JSON dump, every window (another display: SDK 30+)
 dump_active                                           active window only
 ```
 
@@ -30,7 +30,7 @@ dump_active                                           active window only
 open and push continuously.
 
 ```
-screenshot       [size=N] [q=N] [fmt=jpeg|webp|png] [max=1] [secure_check=1]
+screenshot       [size=N] [q=N] [fmt=jpeg|webp|png] [max=1] [secure_check=1] [rect=L,T,R,B]
 stream           [size=N] [q=N] [fps=N]                  JPEG, native by default
 stream_h264      [size=N] [max=1] [fps=N] [bitrate=KBPS] [gop=SEC]
 stream_tilejpeg  [size=N] [q=N] [tile=N]
@@ -49,9 +49,10 @@ by default because it shells out to `dumpsys window`.
 ## Input
 
 ```
-tap         x=NUM y=NUM
-swipe       x1=NUM y1=NUM x2=NUM y2=NUM [dur=MS]
-swipe_dir   left|right|up|down [dur=MS]                  60% travel from screen centre
+tap         x=NUM y=NUM [display=N]
+swipe       x1=NUM y1=NUM x2=NUM y2=NUM [dur=MS] [display=N]
+swipe_dir   left|right|up|down [dur=MS] [display=N]                  60% travel from screen centre
+pinch       in|out [x=NUM y=NUM] [span=PX] [dur=MS] [display=N]      two fingers together (in) or apart (out)
 down        x=NUM y=NUM                                  pointer down (sticks)
 move        x=NUM y=NUM
 up          x=NUM y=NUM                                  releases the down pointer
@@ -133,6 +134,8 @@ node_click       <selector>
 node_long_click  <selector>
 node_set_text    <selector> value="STRING"     atomic ACTION_SET_TEXT
 node_scroll      <selector> [dir=forward|backward|up|down|left|right]
+scroll_forward                                 the biggest list one page on (ERR:scroll-end, ERR:no-scrollable)
+toasts           since=SEQ                     toast texts after event SEQ, one per line (empty: none)
 node_focus       <selector>
 submit           [<selector>]                  ACTION_IME_ENTER on focused
                                                EditText (or matched selector) —
@@ -183,7 +186,7 @@ clip_watch [interval_ms=500]                   → chunked stream, one frame per
 ## Activities
 
 ```
-am_start       n=COMPONENT [a=ACTION] [d=DATA] [f=FLAGS]
+am_start       n=COMPONENT [a=ACTION] [d=DATA] [f=FLAGS] [display=N]
 am_force_stop  PKG
 am_kill        PKG
 am_broadcast   [n=COMPONENT] [a=ACTION] [d=DATA]

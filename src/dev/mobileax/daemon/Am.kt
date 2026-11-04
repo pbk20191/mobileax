@@ -27,7 +27,8 @@ internal class Am(private val ctx: Context) {
      * @param data       intent data URI, may be null
      * @param flags      intent flags, OR'd with FLAG_ACTIVITY_NEW_TASK
      */
-    fun start(component: String?, action: String?, data: String?, flags: Int): ByteArray {
+    /** [display]: launch there (0: the default display). */
+    fun start(component: String?, action: String?, data: String?, flags: Int, display: Int = 0): ByteArray {
         try {
             var cn: ComponentName? = parseComponent(component)
             if (cn == null && component != null && component.indexOf('/') < 0) {
@@ -67,7 +68,9 @@ internal class Am(private val ctx: Context) {
             // IActivityManager.startActivityAsUser (pre-Q). The shell UID is
             // recognised by both as a legitimate caller when callingPackage is
             // "com.android.shell".
-            val result = startActivityViaBinder(intent)
+            val options = if (display == 0) null
+                else android.app.ActivityOptions.makeBasic().setLaunchDisplayId(display).toBundle()
+            val result = startActivityViaBinder(intent, options)
             return ok("ok started=" + cn.flattenToShortString() + " result=" + result)
         } catch (ite: InvocationTargetException) {
             val cause: Throwable = (ite.cause ?: ite)
@@ -85,7 +88,7 @@ internal class Am(private val ctx: Context) {
      * that shape has been stable since API 28.
      */
     @Throws(Exception::class)
-    private fun startActivityViaBinder(intent: Intent?): Int {
+    private fun startActivityViaBinder(intent: Intent?, options: android.os.Bundle? = null): Int {
         // Try IActivityTaskManager first (Q+), then IActivityManager.
         val candidates = arrayOf(
             iActivityTaskManagerOrNull(),
@@ -96,7 +99,7 @@ internal class Am(private val ctx: Context) {
             if (svc == null) continue
             val m: Method = findStartActivityAsUser(svc.javaClass) ?: continue
             try {
-                val args: Array<Any?> = buildStartArgs(m, intent)
+                val args: Array<Any?> = buildStartArgs(m, intent, options)
                 val ret = m.invoke(svc, *args)
                 return ret as? Int ?: 0
             } catch (ite: InvocationTargetException) {
@@ -208,7 +211,7 @@ internal class Am(private val ctx: Context) {
             return best
         }
 
-        private fun buildStartArgs(m: Method, intent: Intent?): Array<Any?> {
+        private fun buildStartArgs(m: Method, intent: Intent?, options: android.os.Bundle?): Array<Any?> {
             val p = m.getParameterTypes()
             val args: MutableList<Any?> = ArrayList(p.size)
             var intentIdx = -1
@@ -229,6 +232,8 @@ internal class Am(private val ctx: Context) {
                     args.add(if (needsCallingPackage(args)) "com.android.shell" else null)
                 } else if (p[i] == Int::class.javaPrimitiveType) {
                     args.add(0)
+                } else if (p[i] == android.os.Bundle::class.java) {
+                    args.add(options)
                 } else {
                     args.add(null)
                 }

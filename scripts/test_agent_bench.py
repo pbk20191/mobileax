@@ -72,6 +72,14 @@ class AgentBenchTest(unittest.TestCase):
         self.assertFalse(r["ok"])
         self.assertIn("adb", r["setup_error"])
 
+    def test_a_step_whose_reply_lacks_its_expect_fails(self):
+        fake = FakeClient({"tap": ("tapped\ntoast: saved", False), "find": ("hit", False)})
+        ok = ab.run_scenario(fake, {"name": "x", "steps": [], "check": {"tool": "tap", "args": {}, "expect": "toast:"}})
+        self.assertTrue(ok["ok"])
+        bad = ab.run_scenario(fake, {"name": "x", "steps": [], "check": {"tool": "find", "args": {}, "expect": "toast:"}})
+        self.assertFalse(bad["ok"])
+        self.assertIn("toast:", bad["steps"][0]["error"])
+
 
 if __name__ == "__main__":
     unittest.main()

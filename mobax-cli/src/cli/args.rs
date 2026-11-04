@@ -528,6 +528,7 @@ pub(crate) fn parse_provider_common<'a>(rest: &[&'a str]) -> Result<(u32, bool, 
 pub(crate) fn parse_args(args: &[String]) -> Result<Opts, String> {
     let mut host = DEFAULT_HOST.to_string();
     let mut port = DEFAULT_PORT;
+    let mut port_given = false;
     let mut out_fmt = flags::OutFmt::from_env();
     let mut device_serial: Option<String> = None;
     let mut positional: Vec<&str> = Vec::new();
@@ -546,6 +547,7 @@ pub(crate) fn parse_args(args: &[String]) -> Result<Opts, String> {
                     .ok_or("--port needs a value")?
                     .parse()
                     .map_err(|_| "invalid --port".to_string())?;
+                port_given = true;
             }
             "-s" | "--device" => {
                 i += 1;
@@ -591,6 +593,10 @@ pub(crate) fn parse_args(args: &[String]) -> Result<Opts, String> {
                     }
                 }
                 connect.serial = Some(serial.to_string());
+            }
+            // `--port` anywhere on the line was taken as the global flag.
+            if connect.port.is_none() && port_given {
+                connect.port = Some(port);
             }
             Cmd::Connect(connect)
         }
@@ -1095,6 +1101,21 @@ mod parse_see_tests {
 #[cfg(test)]
 mod parse_use_tests {
     use super::{parse_args, Cmd};
+
+    fn selected_port(args: &[&str]) -> Option<u16> {
+        let args = args.iter().map(|arg| (*arg).to_string()).collect::<Vec<_>>();
+        match parse_args(&args).expect("use arguments should parse").cmd {
+            Cmd::Connect(connect) => connect.port,
+            other => panic!("expected connect command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn use_takes_the_port_before_or_after_the_verb() {
+        assert_eq!(selected_port(&["use", "--port", "9009"]), Some(9009));
+        assert_eq!(selected_port(&["--port", "9009", "use"]), Some(9009));
+        assert_eq!(selected_port(&["use"]), None);
+    }
 
     fn selected_serial(args: &[&str]) -> Option<String> {
         let args = args.iter().map(|arg| (*arg).to_string()).collect::<Vec<_>>();

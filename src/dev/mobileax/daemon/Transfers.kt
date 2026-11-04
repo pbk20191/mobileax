@@ -89,6 +89,7 @@ internal class Transfers(private val ctx: Context, private val installer: Instal
         if (!exists) return c.errAndEnd("not-found:$path")
         if (isDir) return c.errAndEnd("is-directory:$path")
         var input: FileInputStream? = null
+        var sent = 0L
         try {
             input = withContext(Loop.Work) { FileInputStream(f) }
             while (true) {
@@ -96,12 +97,16 @@ internal class Transfers(private val ctx: Context, private val installer: Instal
                 val n = withContext(Loop.Work) { input.read(buf) }
                 if (n <= 0) break
                 c.send(buf, 0, n)
+                sent += n
             }
             c.sendRaw(END)
         } catch (e: IOException) {
-            // Like the old Files.pull: terminate the stream, keep the connection.
+            // Unreadable (Permission denied): say so instead of a 0-byte
+            // success. Clients read ERR only as the first frame, so a failure
+            // after data can only end the stream.
             if (c.closed) throw e
             Logx.w("pull failed", e)
+            if (sent == 0L) c.send(("ERR:read-failed:" + e.message).toByteArray(Charsets.UTF_8))
             c.sendRaw(END)
         } finally {
             input?.let { i -> withContext(NonCancellable + Loop.Work) { try { i.close() } catch (_: IOException) {} } }

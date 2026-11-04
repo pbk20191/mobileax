@@ -20,6 +20,7 @@ struct Row {
                       // then role= / state= / … (the action flag `click` is implicit in `verb`)
     x: i64,
     y: i64,
+    bounds: Option<(i64, i64, i64, i64)>,
     sel: String,      // daemon-grammar selector for the node (`id=…` / `class=… text=…`)
 }
 
@@ -33,6 +34,8 @@ pub struct UiRow {
     pub ident: String,
     pub x: i64,
     pub y: i64,
+    /// The node's screen rectangle (left, top, right, bottom).
+    pub bounds: Option<(i64, i64, i64, i64)>,
     /// Daemon-grammar selector for the node.
     pub sel: String,
 }
@@ -102,7 +105,7 @@ pub fn interactive_rows(roots: &[&Value]) -> Vec<UiRow> {
         } else {
             format!("{}|{}|{}", r.verb, r.class, r.id)
         };
-        out.push(UiRow { line, ident, x: r.x, y: r.y, sel: r.sel });
+        out.push(UiRow { line, ident, x: r.x, y: r.y, bounds: r.bounds, sel: r.sel });
     }
     out
 }
@@ -289,6 +292,7 @@ fn collect_interactive<'a>(node: &'a Value, slot: Option<(&str, usize)>, absorb:
             flags:  tags,
             x,
             y,
+            bounds: selector::bounds(node),
             sel:    crate::selector::node_to_daemon_selector(node),
         });
     }

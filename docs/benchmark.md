@@ -66,6 +66,8 @@ a check). No LLM runs, so it is free and repeatable. Spec:
 - **Approximate tokens** = ASCII chars / 4 (rounded up) + one per non-ASCII
   char. A fixed yardstick for comparing runs, not a tokenizer; changing it
   means re-recording the baseline.
+- A step may name `expect`: text its reply must contain (a toast, a
+  result only the reply shows); without it the step fails.
 - `setup` steps are not counted. They may call host adb (`{"adb": [...]}`),
   since MCP has no device shell.
 - Tokens and time are medians over runs. Action replies report what changed
@@ -80,6 +82,11 @@ a check). No LLM runs, so it is free and repeatable. Spec:
   screen before it (a late event from home); the next tap missed. A slow
   emulator (a long-running one with its guest swapping, or a busy host) makes
   every action several times slower: cold-boot it before measuring.
+- Twice, during s4 (the camera), the system watchdog killed system_server
+  (`Blocked in monitor WindowManagerService`), and the emulator's camera HAL
+  aborted right after. Not yet told apart from a cause in mobax. Since
+  `4c28b14` the daemon exits with system_server and the next call starts a
+  fresh one (seen working here); a cold boot clears the leftover state.
 - s1 lands on 651 or 817 tokens per session (no spread within one): the
   tap's reply differs between sessions. Compare s1 across sessions with care.
 
@@ -105,10 +112,11 @@ within ±5% on the total (+3.6%, +2.7%) with identical calls:
 | Scenario | Task | Measures |
 |---|---|---|
 | s1 | Settings → "디스플레이 및 터치" | basic navigation |
-| s2 | Accessibility list, 4 swipes (the end; the 4th sometimes still scrolls), last item | scrolling (later: find-with-scroll) |
+| s2 | Accessibility list, last item (`tap` with `scroll: true`; the baseline used 4 swipes) | scrolling (later: find-with-scroll) |
 | s3 | Settings search "배터리" → result | typing, result check |
-| s4 | Fresh camera: location-tag prompt, location permission | popups (later: auto-handling) |
+| s4 | Fresh camera: location-tag prompt, location permission (no `wait`: a missed tap looks again while the screen moves) | popups (later: auto-handling) |
 | s5 | Recents (two fixed cards), one `ui` | output size of a full-screen system UI |
+| s6 | About phone → tap Build number; the check is the reply carrying `toast:` | a result shown only as a toast |
 
 Findings from writing the scenarios:
 
@@ -119,3 +127,15 @@ Findings from writing the scenarios:
 - Settings search is its own package (`com.google.android.settings.intelligence`).
 - `wait` returning at once while a page is still settling makes the first
   swipe land at a slightly different scroll position each run.
+
+### Changes measured against the baseline
+
+| Change | Calls | Scenario tokens | Per-session cost |
+|---|---:|---:|---:|
+| Tool description diet (`mcp/tool-diet`): shared arguments (`device`, `observe`, `timeout_ms`) explained once in the instructions; descriptions no longer repeat the instructions; no empty `required` | ±0 | ±0 (noise) | 2979 → 1959 (−34%): tools/list 2668 → 1605, instructions 311 → 354 |
+| The server rejects unknown arguments itself (naming the ones the tool takes), so schemas drop `additionalProperties:false` | ±0 | ±0 | 1959 → 1820 (−39% overall): tools/list 1605 → 1466 |
+| `tap`/`find` `scroll: true` (pages the biggest list with ACTION_SCROLL_FORWARD until the target shows); s2 now uses it | s2 8 → 4 | s2 1847 → 673 (−64%) | tools/list 1466 → 1513 (+47 for the argument) |
+| A missed `tap` looks again while the screen is moving (400 ms with no events = still, fail at once; at most 4 s); s2 and s4 drop their `wait` steps; s1 setup also closes Settings search | s2 4 → 3, s4 5 → 4 | s4 526 → 339; every scenario 0% run-to-run spread | ±0 |
+| **All of the above vs the baseline** | **24 → 18** | **4581 → 3211 (−30%)** | **2979 → 1867 (−37%)** |
+| Toasts: action replies end with `toast: …` for each toast the action raised (daemon wire `toasts since=SEQ`); new s6 | s6: 2 | s6: 338 | ±0 |
+| `screenshot` `target` (@N, text, selector): just that element, cut from a full-resolution frame | ±0 | a Settings row: 418×78 (~43 image tokens at w·h/750) vs the 346×768 screen (~354) | +17 |

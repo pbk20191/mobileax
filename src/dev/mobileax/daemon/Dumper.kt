@@ -14,16 +14,20 @@ class Dumper(private val ua: UiAutomation) {
     /** One dump at a time: they share [buf]. Waiters suspend, they don't block a thread. */
     private val mutex = Mutex()
 
-    suspend fun dumpAll(): String = mutex.withLock { withContext(Loop.Work) { dumpAllLocked() } }
+    /** Every window of [display] (0: the default display; others need SDK 30). */
+    suspend fun dumpAll(display: Int = 0): String = mutex.withLock { withContext(Loop.Work) { dumpAllLocked(display) } }
 
-    private fun dumpAllLocked(): String {
+    private fun dumpAllLocked(display: Int): String {
         buf.setLength(0)
         val out = JsonOut(buf)
         out.beginObj()
         out.num("ts", System.currentTimeMillis())
 
         out.key("windows").beginArr()
-        val windows = ua.getWindows()
+        val windows = if (display == 0) ua.getWindows() else {
+            check(android.os.Build.VERSION.SDK_INT >= 30) { "windows of display $display need Android 11" }
+            ua.windowsOnAllDisplays.get(display) ?: emptyList()
+        }
         if (windows != null) {
             for (w in windows) {
                 writeWindow(w, out)

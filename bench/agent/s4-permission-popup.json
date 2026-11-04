@@ -49,12 +49,6 @@
    }
   },
   {
-   "tool": "wait",
-   "args": {
-    "target": "#permission_allow_foreground_only_button"
-   }
-  },
-  {
    "tool": "tap",
    "args": {
     "target": "#permission_allow_foreground_only_button"

@@ -58,6 +58,12 @@ reply with what changed: + added, ~ changed and - removed rows, or the whole new
 screen. You rarely need `ui` after an action. A ref stays valid until a reply \
 shows a new screen.\n\
 \n\
+Every tool takes an optional `device` (adb serial; default: the one `use` \
+connected). `observe: false` skips an action's settle and reply. \
+`timeout_ms` defaults to 10000. `display` (an id, 0 = main) aims `ui`, \
+`open`, `swipe` and x,y `tap` at another display; there, tap by the x,y \
+`ui` lists.\n\
+\n\
 When you already know several steps (tap a field, fill it, press enter, wait for \
 the result), send them as one `batch`: one call instead of one per step.\n\
 \n\
@@ -390,6 +396,12 @@ impl Engine {
                     r.keep = false;
                 }
             }
+            // Toasts leave no rows: report the ones this action raised.
+            if let (true, Some(since)) = (r.keep, seq) {
+                if let Ok(body) = sess.conn.call(&format!("toasts since={since}")) {
+                    r.text.push_str(&toast_lines(&String::from_utf8_lossy(&body)));
+                }
+            }
         }
         if r.keep {
             self.checkin(&t, sess);
@@ -632,6 +644,28 @@ impl Engine {
         (true, format!("{} · {} rows\n{}", screen.title(), screen.len(), screen.table().trim_end()))
     }
 
+    /// Another display's rows. Not remembered: @N refs stay the main display's.
+    fn ui_on(&self, device: Option<&str>, display: i64) -> Reply {
+        let t = match self.target(device) {
+            Ok(t) => t,
+            Err(e) => return (false, e),
+        };
+        let mut sess = match self.checkout(&t) {
+            Ok(s) => s,
+            Err(e) => return (false, e),
+        };
+        let dump = sess.conn.call(&format!("dump display={display}")).and_then(|b| parse_dump(&b));
+        self.checkin(&t, sess);
+        match dump {
+            Ok(d) => {
+                let screen = Screen::from_dump(&d, None);
+                (true, format!("display {display} · {} · {} rows (tap by x,y with display={display})\n{}",
+                    screen.title(), screen.len(), screen.table().trim_end()))
+            }
+            Err(e) => (false, format!("ERR:DAEMON_ERROR:{e}")),
+        }
+    }
+
     /// Reads the screen now and remembers it (refs carried over).
     fn reread(&self, t: &Target) -> Result<(), String> {
         let mut sess = self.checkout(t)?;
@@ -656,7 +690,7 @@ impl Engine {
     /// The x,y and selector of row `@n`, checked against the screen as it
     /// is now: a ref from a screen that has since gone is refused (with the
     /// new screen), so a late transition can't send a tap to the wrong row.
-    fn row(&self, device: Option<&str>, n: u32) -> Result<(i64, i64, String), String> {
+    fn row(&self, device: Option<&str>, n: u32) -> Result<(i64, i64, String, Option<Bounds>), String> {
         let t = self.target(device)?;
         let mut sess = self.checkout(&t)?;
         let dump = sess.conn.call("dump").and_then(|b| parse_dump(&b)).map_err(|e| format!("ERR:DAEMON_ERROR:{e}"))?;
@@ -668,7 +702,7 @@ impl Engine {
         let had = prev.get(n).is_some();
         let now = Screen::from_dump(&dump, Some(prev));
         let same_screen = matches!(now.change_from(Some(prev)), Change::Same | Change::Rows(_));
-        let found = now.get(n).map(|r| (r.x, r.y, r.sel.clone()));
+        let found = now.get(n).map(|r| (r.x, r.y, r.sel.clone(), r.bounds));
         let reply = format!("{} · {} rows\n{}", now.title(), now.len(), now.table().trim_end());
         screens.insert(t, now);
         match found {
@@ -679,10 +713,13 @@ impl Engine {
         }
     }
 
-    fn screenshot(&self, device: Option<&str>, size: Option<i64>, native: bool) -> Result<Vec<u8>, String> {
+    fn screenshot(&self, device: Option<&str>, size: Option<i64>, native: bool, rect: Option<Bounds>) -> Result<Vec<u8>, String> {
         let t = self.target(device)?;
         let mut sess = self.checkout(&t)?;
-        let wire = if native { "screenshot max=1".to_string() } else { format!("screenshot size={}", size.unwrap_or(768)) };
+        let mut wire = if native { "screenshot max=1".to_string() } else { format!("screenshot size={}", size.unwrap_or(768)) };
+        if let Some((l, t, r, b)) = rect {
+            wire.push_str(&format!(" rect={l},{t},{r},{b}"));
+        }
         let bytes = sess.conn.call(&wire).map_err(|e| format!("ERR:DAEMON_ERROR:{e}"))?;
         self.checkin(&t, sess);
         if bytes.starts_with(b"ERR:") {
@@ -824,6 +861,15 @@ fn started_pkg(text: &str) -> Option<String> {
     (!pkg.is_empty()).then(|| pkg.to_string())
 }
 
+/// `toasts` reply → a `toast: …` line per toast (none for an error: an
+/// older daemon doesn't keep them).
+fn toast_lines(reply: &str) -> String {
+    if reply.starts_with("ERR:") {
+        return String::new();
+    }
+    reply.lines().filter(|l| !l.trim().is_empty()).map(|l| format!("\ntoast: {l}")).collect()
+}
+
 /// The daemon's event counter, to settle against after an action.
 fn event_seq(conn: &mut Conn) -> Option<u64> {
     let body = conn.call("event_seq").ok()?;
@@ -856,95 +902,115 @@ struct Tool {
     schema: &'static str,
 }
 
-const DEVICE: &str = r#""device":{"type":"string","description":"Device serial (adb devices); omit for the current one"}"#;
-const TIMEOUT: &str = r#""timeout_ms":{"type":"integer","description":"Wait budget in ms (default 10000)"}"#;
-const OBSERVE: &str = r#""observe":{"type":"boolean","description":"Wait for the screen to settle and reply with what changed (default true)"}"#;
+// Shared arguments carry no description here: the instructions explain
+// them once, instead of once per tool in every session's tool list.
+const DEVICE: &str = r#""device":{"type":"string"}"#;
+const TIMEOUT: &str = r#""timeout_ms":{"type":"integer"}"#;
+const OBSERVE: &str = r#""observe":{"type":"boolean"}"#;
+const DISPLAY: &str = r#""display":{"type":"integer"}"#;
+const SCROLL: &str = r#""scroll":{"type":"boolean","description":"page the biggest list until the target shows"}"#;
 
-fn tools() -> Vec<Tool> {
+/// The tool list, built once (its schemas are leaked strings).
+fn tools() -> &'static [Tool] {
+    static TOOLS: std::sync::OnceLock<Vec<Tool>> = std::sync::OnceLock::new();
+    TOOLS.get_or_init(build_tools)
+}
+
+/// An argument [name] doesn't take (a batch step's own `tool` aside), and
+/// the ones it does. The server checks this itself, so the schemas can
+/// leave out `additionalProperties`.
+fn unknown_arg(name: &str, args: &Value) -> Option<(String, Vec<String>)> {
+    let tool = tools().iter().find(|t| t.name == name)?;
+    let schema = json::parse(tool.schema).ok()?;
+    let props = json::obj_get(&schema, "properties")?;
+    let Value::Obj(known) = props else { return None };
+    let known: Vec<String> = known.iter().map(|(k, _)| k.clone()).collect();
+    let Value::Obj(given) = args else { return None };
+    given
+        .iter()
+        .map(|(k, _)| k)
+        .find(|k| k.as_str() != "tool" && !known.contains(k))
+        .map(|k| (k.clone(), known))
+}
+
+fn build_tools() -> Vec<Tool> {
     // Schemas are assembled at startup from the shared fragments above.
     fn obj(props: &[&str], required: &[&str]) -> &'static str {
         let req: Vec<String> = required.iter().map(|r| format!("\"{r}\"")).collect();
+        let req = if req.is_empty() { String::new() } else { format!(r#","required":[{}]"#, req.join(",")) };
         Box::leak(
-            format!(
-                r#"{{"type":"object","properties":{{{}}},"required":[{}],"additionalProperties":false}}"#,
-                props.join(","),
-                req.join(",")
-            )
-            .into_boxed_str(),
+            format!(r#"{{"type":"object","properties":{{{}}}{req}}}"#, props.join(","))
+                .into_boxed_str(),
         )
     }
     vec![
         Tool {
             name: "use",
-            description: "Connect to a device (or the only one attached) and start the on-device daemon. Call this first.",
-            schema: obj(&[r#""serial":{"type":"string","description":"Device serial from adb devices; omit when only one is attached"}"#], &[]),
+            description: "Connect to a device and start the on-device daemon. Call this first.",
+            schema: obj(&[r#""serial":{"type":"string","description":"omit when only one is attached"}"#], &[]),
         },
         Tool {
             name: "ui",
-            description: "List what is on screen as rows numbered @1, @2, …: verb (tap / fill / - for text), class, label, #resource-id, centre x,y and state. The main way to read the screen; act on a row by its @N.",
-            schema: obj(&[r#""scope":{"type":"string","enum":["app","active","all"],"description":"app: every app window incl. dialogs (default); active: focused window; all: system windows too"}"#, DEVICE], &[]),
+            description: "The screen as @N rows. The main way to read it.",
+            schema: obj(&[r#""scope":{"type":"string","enum":["app","active","all"],"description":"app (default): app windows and dialogs; active: focused window; all: system windows too"}"#, DISPLAY, DEVICE], &[]),
         },
         Tool {
             name: "screenshot",
-            description: "Capture the screen as a JPEG image (768 px long edge by default).",
-            schema: obj(&[r#""size":{"type":"integer","description":"Long edge in px"}"#, r#""native":{"type":"boolean","description":"Full device resolution"}"#, DEVICE], &[]),
+            description: "The screen as a JPEG (768 px long edge by default), or with `target` (@N, text, selector) just that element, from full resolution.",
+            schema: obj(&[r#""target":{"type":"string"}"#, r#""size":{"type":"integer","description":"long edge px"}"#, r#""native":{"type":"boolean"}"#, DEVICE], &[]),
         },
         Tool {
             name: "find",
-            description: "Find nodes matching a selector and print them, without acting.",
-            schema: obj(&[r#""selector":{"type":"string","description":"Text, #resource_id, or CSS-like selector"}"#, TIMEOUT, DEVICE], &["selector"]),
+            description: "Print the nodes a selector matches, without acting.",
+            schema: obj(&[r#""selector":{"type":"string"}"#, SCROLL, TIMEOUT, DEVICE], &["selector"]),
         },
         Tool {
             name: "tap",
-            description: "Tap a row by its @N from `ui`, a node by text / #resource_id / selector, or coordinates x,y. Replies with what changed on screen.",
-            schema: obj(&[r#""target":{"type":"string","description":"@N, text, #resource_id, or selector"}"#, r#""x":{"type":"integer"}"#, r#""y":{"type":"integer"}"#, TIMEOUT, OBSERVE, DEVICE], &[]),
+            description: "Tap a target (@N, text, #resource_id, selector) or x,y.",
+            schema: obj(&[r#""target":{"type":"string"}"#, SCROLL, r#""x":{"type":"integer"}"#, r#""y":{"type":"integer"}"#, DISPLAY, TIMEOUT, OBSERVE, DEVICE], &[]),
         },
         Tool {
             name: "type",
-            description: "Type text into the focused field at the cursor, in any language (Korean, emoji, …). Replies with what changed on screen.",
+            description: "Type text at the cursor of the focused field, any language.",
             schema: obj(&[r#""text":{"type":"string"}"#, OBSERVE, DEVICE], &["text"]),
         },
         Tool {
             name: "fill",
-            description: "Set the text of an edit field in one step (ACTION_SET_TEXT). The selector is a row's @N, or free text that picks the best-matching EditText. Replies with what changed on screen.",
-            schema: obj(&[r#""selector":{"type":"string","description":"@N, #resource_id, selector, or the field's label"}"#, r#""text":{"type":"string"}"#, OBSERVE, DEVICE], &["selector", "text"]),
+            description: "Set an edit field's text in one step. selector: @N, #resource_id, selector, or the field's label.",
+            schema: obj(&[r#""selector":{"type":"string"}"#, r#""text":{"type":"string"}"#, OBSERVE, DEVICE], &["selector", "text"]),
         },
         Tool {
             name: "swipe",
-            description: "Swipe in a direction (the finger's direction: up scrolls content down). Replies with what changed on screen.",
-            schema: obj(&[r#""direction":{"type":"string","enum":["up","down","left","right"]}"#, r#""duration_ms":{"type":"integer"}"#, OBSERVE, DEVICE], &["direction"]),
+            description: "Swipe the finger this way (up scrolls content down), or pinch two fingers `out` (zoom in) or `in` around x,y (default: centre).",
+            schema: obj(&[r#""direction":{"type":"string","enum":["up","down","left","right"]}"#, r#""pinch":{"type":"string","enum":["in","out"]}"#, r#""x":{"type":"integer"}"#, r#""y":{"type":"integer"}"#, r#""duration_ms":{"type":"integer"}"#, DISPLAY, OBSERVE, DEVICE], &[]),
         },
         Tool {
             name: "go",
-            description: "Press a navigation / system key: back, home, recents, enter, … Replies with what changed on screen.",
-            schema: obj(&[r#""key":{"type":"string","description":"back, home, recents, enter, menu, …"}"#, OBSERVE, DEVICE], &["key"]),
+            description: "Press a key: back, home, recents, enter, menu, …",
+            schema: obj(&[r#""key":{"type":"string"}"#, OBSERVE, DEVICE], &["key"]),
         },
         Tool {
             name: "batch",
-            description: "Run several steps in one call when you already know the sequence, e.g. [{\"tool\":\"tap\",\"target\":\"@3\"},{\"tool\":\"fill\",\"selector\":\"Search\",\"text\":\"cats\"},{\"tool\":\"go\",\"key\":\"enter\"},{\"tool\":\"wait\",\"target\":\"Results\"}]. Each step takes that tool's arguments; each action waits for the screen to settle before the next. Stops at the first failure. Replies with one line per step, then what changed on screen over the whole batch. @N refs are from the screen you last saw: once a step opens another screen, name later targets by text or selector.",
+            description: "Several steps in one call, e.g. [{\"tool\":\"tap\",\"target\":\"@3\"},{\"tool\":\"go\",\"key\":\"enter\"}]. Each settles before the next; stops at the first failure. Replies one line per step, then what changed overall. @N refs are from the screen you last saw: after a step opens another screen, use text or selectors.",
             schema: obj(&[
-                r#""steps":{"type":"array","maxItems":20,"items":{"type":"object","properties":{"tool":{"type":"string","enum":["tap","type","fill","swipe","go","open","close","wait","find","watch"]}},"required":["tool"]},"description":"Steps in order: {\"tool\": NAME, ...that tool's arguments}"}"#,
+                r#""steps":{"type":"array","maxItems":20,"items":{"type":"object","properties":{"tool":{"type":"string","enum":["tap","type","fill","swipe","go","open","close","wait","find","watch"]}},"required":["tool"]},"description":"{\"tool\": NAME, ...its arguments}"}"#,
                 DEVICE,
             ], &["steps"]),
         },
         Tool {
             name: "wait",
-            description: "Wait until text / a selector appears on screen.",
+            description: "Wait until a target appears.",
             schema: obj(&[r#""target":{"type":"string"}"#, TIMEOUT, DEVICE], &["target"]),
         },
         Tool {
             name: "watch",
-            description: "Wait until the screen differs from what you last saw, or until some text shows, then reply with what changed. The device pushes changes, so this costs nothing while waiting. Use it instead of calling `ui` again and again (a download finishing, a reply arriving, an animation ending).",
-            schema: obj(&[
-                r#""until":{"type":"string","description":"Wait for a row showing this text (case-insensitive) instead of any change"}"#,
-                r#""timeout_ms":{"type":"integer","description":"How long to wait (default 10000)"}"#,
-                DEVICE,
-            ], &[]),
+            description: "Wait until the screen differs from what you last saw (or `until` a row shows this text, case-insensitive), then reply with what changed.",
+            schema: obj(&[r#""until":{"type":"string"}"#, TIMEOUT, DEVICE], &[]),
         },
         Tool {
             name: "open",
-            description: "Launch an app by package name (com.android.settings), PKG/.Activity, or app label. Replies with the screen it opens.",
-            schema: obj(&[r#""app":{"type":"string"}"#, OBSERVE, DEVICE], &["app"]),
+            description: "Launch an app: package, PKG/.Activity, or label.",
+            schema: obj(&[r#""app":{"type":"string"}"#, DISPLAY, OBSERVE, DEVICE], &["app"]),
         },
         Tool {
             name: "close",
@@ -953,26 +1019,26 @@ fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "logcat",
-            description: "Recent device log lines (logcat), newest last. Filter by app or pid, priority, tags, a pattern or time; drop noise with exclude; use crash=true for crash stacks.",
+            description: "Recent logcat lines, newest last. level: minimum priority; tags: TAG or TAG:LEVEL; grep: regexes, one must match; exclude: drop lines containing; since: 90, 30s, 5m, 2h; format: logcat -v (threadtime); lines: default 100; crash: crash buffer; clear: clear instead of read.",
             schema: obj(&[
-                r#""package":{"type":"string","description":"Only this app's running process"}"#,
-                r#""pid":{"type":"integer","description":"Only this process id"}"#,
-                r#""level":{"type":"string","enum":["V","D","I","W","E","F"],"description":"Minimum priority"}"#,
-                r#""tags":{"type":"array","items":{"type":"string"},"description":"Only these tags (TAG or TAG:LEVEL)"}"#,
-                r#""grep":{"type":"array","items":{"type":"string"},"description":"Regexes (ECMAScript); a line must match one of them"}"#,
-                r#""exclude":{"type":"array","items":{"type":"string"},"description":"Drop lines containing any of these texts"}"#,
-                r#""ignore_case":{"type":"boolean","description":"Case-insensitive grep and exclude"}"#,
-                r#""since":{"type":"string","description":"Only lines from the last N seconds/minutes/hours: 90, 30s, 5m, 2h"}"#,
-                r#""format":{"type":"string","description":"logcat -v output format: brief, threadtime (default), time, tag, raw, long, …"}"#,
-                r#""lines":{"type":"integer","description":"How many lines (default 100)"}"#,
-                r#""crash":{"type":"boolean","description":"Read the crash buffer"}"#,
-                r#""clear":{"type":"boolean","description":"Clear the log buffers instead of reading"}"#,
+                r#""package":{"type":"string"}"#,
+                r#""pid":{"type":"integer"}"#,
+                r#""level":{"type":"string","enum":["V","D","I","W","E","F"]}"#,
+                r#""tags":{"type":"array","items":{"type":"string"}}"#,
+                r#""grep":{"type":"array","items":{"type":"string"}}"#,
+                r#""exclude":{"type":"array","items":{"type":"string"}}"#,
+                r#""ignore_case":{"type":"boolean"}"#,
+                r#""since":{"type":"string"}"#,
+                r#""format":{"type":"string"}"#,
+                r#""lines":{"type":"integer"}"#,
+                r#""crash":{"type":"boolean"}"#,
+                r#""clear":{"type":"boolean"}"#,
                 DEVICE,
             ], &[]),
         },
         Tool {
             name: "info",
-            description: "Device and daemon info: model, Android version, display size, foreground app.",
+            description: "Model, Android version, display size, foreground app.",
             schema: obj(&[DEVICE], &[]),
         },
         Tool {
@@ -982,8 +1048,8 @@ fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "mobax",
-            description: "Run any other mobax CLI verb, e.g. [\"apps\",\"--3rd\"], [\"prop\",\"ro.build.version.sdk\"], [\"logs\",\"--tail\",\"50\"]. See `mobax --help`.",
-            schema: obj(&[r#""args":{"type":"array","items":{"type":"string"},"description":"Verb and arguments, without the leading mobax"}"#, DEVICE], &["args"]),
+            description: "Any other mobax CLI verb, e.g. [\"apps\",\"--3rd\"], [\"prop\",\"ro.build.version.sdk\"]. See `mobax --help`.",
+            schema: obj(&[r#""args":{"type":"array","items":{"type":"string"}}"#, DEVICE], &["args"]),
         },
     ]
 }
@@ -1030,8 +1096,13 @@ fn call_tool(name: &str, args: &Value, engine: &Engine, device: Option<&str>, br
     let n = |k: &str| json::obj_get(args, k).and_then(json::as_num);
     let b = |k: &str| matches!(json::obj_get(args, k), Some(Value::Bool(true)));
     let need = |k: &str| s(k).ok_or_else(|| (-32602, format!("{name}: missing \"{k}\"")));
+    if let Some((k, known)) = unknown_arg(name, args) {
+        return Err((-32602, format!("{name}: unknown argument \"{k}\"; it takes {}", known.join(", "))));
+    }
     // Actions report what changed unless the caller opts out.
-    let observe = !matches!(json::obj_get(args, "observe"), Some(Value::Bool(false)));
+    // The settle and change reply watch the main display: off for another one.
+    let observe = !matches!(json::obj_get(args, "observe"), Some(Value::Bool(false)))
+        && n("display").is_none_or(|d| d == 0);
     let device = s("device").or_else(|| device.map(str::to_string));
     let dev = device.as_deref();
 
@@ -1053,6 +1124,9 @@ fn call_tool(name: &str, args: &Value, engine: &Engine, device: Option<&str>, br
             argv.push("drop".into());
             Via::Child
         }
+        "ui" if n("display").is_some_and(|d| d != 0) && engine.in_process() => {
+            return Ok(Out::Text(engine.ui_on(dev, n("display").unwrap_or(0))));
+        }
         "ui" => match s("scope").as_deref() {
             Some("active") => {
                 argv.extend(["ui".into(), "--active".into()]);
@@ -1069,10 +1143,35 @@ fn call_tool(name: &str, args: &Value, engine: &Engine, device: Option<&str>, br
             }
         },
         "screenshot" => {
+            // `target`: only that element, cut from a full-resolution frame.
+            let rect = match s("target") {
+                None => None,
+                Some(_) if !engine.in_process() => {
+                    return Ok(Out::Text((false, "ERR:PRECONDITION:screenshot target needs the daemon reachable through the local adb server".into())));
+                }
+                Some(t) => match row_ref(&t) {
+                    Some(r) => match engine.row(dev, r) {
+                        Ok((_, _, _, Some(b))) => Some(b),
+                        Ok(_) => return Ok(Out::Text((false, format!("ERR:NOT_FOUND:@{r} has no bounds")))),
+                        Err(e) => return Ok(Out::Text((false, e))),
+                    },
+                    None => {
+                        let (mut ok, mut text) = engine.run(dev, &["find".to_string(), t.clone()]);
+                        // Not selector syntax: the target is the element's text.
+                        if !ok && text.contains("BAD_ARG") {
+                            (ok, text) = engine.run(dev, &["find".to_string(), format!(":has-text({t:?})")]);
+                        }
+                        match find_bounds(&text) {
+                            Some(b) if ok => Some(b),
+                            _ => return Ok(Out::Text((false, text))),
+                        }
+                    }
+                },
+            };
             if !engine.in_process() {
                 return screenshot_child(n("size"), b("native"), device, &engine.global).map(Out::Json);
             }
-            return Ok(Out::Json(match engine.screenshot(dev, n("size"), b("native")) {
+            return Ok(Out::Json(match engine.screenshot(dev, n("size"), b("native"), rect) {
                 Ok(jpeg) => format!(
                     r#"{{"content":[{{"type":"image","mimeType":"image/jpeg","data":"{}"}}],"isError":false}}"#,
                     base64(&jpeg)
@@ -1085,12 +1184,19 @@ fn call_tool(name: &str, args: &Value, engine: &Engine, device: Option<&str>, br
             timeout(&mut argv);
             Via::Run
         }
+        "tap" if n("display").is_some_and(|d| d != 0) => {
+            let (Some(x), Some(y)) = (n("x"), n("y")) else {
+                return Err((-32602, "tap: on another display give x, y (from `ui` with that display)".into()));
+            };
+            argv.extend(["do".into(), format!("tap x={x} y={y} display={}", n("display").unwrap_or(0))]);
+            Via::Act
+        }
         "tap" => {
             argv.push("tap".into());
             match (s("target"), n("x"), n("y")) {
                 (Some(t), _, _) => match row_ref(&t) {
                     Some(r) => match engine.row(dev, r) {
-                        Ok((x, y, _)) => argv.extend([x.to_string(), y.to_string()]),
+                        Ok((x, y, _, _)) => argv.extend([x.to_string(), y.to_string()]),
                         Err(e) => return Ok(Out::Text((false, e))),
                     },
                     None => argv.push(t),
@@ -1109,7 +1215,7 @@ fn call_tool(name: &str, args: &Value, engine: &Engine, device: Option<&str>, br
             let sel = need("selector")?;
             let sel = match row_ref(&sel) {
                 Some(r) => match engine.row(dev, r) {
-                    Ok((_, _, daemon_sel)) => daemon_sel,
+                    Ok((_, _, daemon_sel, _)) => daemon_sel,
                     Err(e) => return Ok(Out::Text((false, e))),
                 },
                 None => sel,
@@ -1118,8 +1224,25 @@ fn call_tool(name: &str, args: &Value, engine: &Engine, device: Option<&str>, br
             Via::Act
         }
         "swipe" => {
-            argv.extend(["swipe".into(), need("direction")?]);
-            argv.extend(n("duration_ms").map(|d| d.to_string()));
+            let display = n("display").filter(|d| *d != 0);
+            match (s("pinch"), s("direction")) {
+                (Some(p), _) => {
+                    let mut wire = pinch_wire(&p, n("x"), n("y")).map_err(|e| (-32602, e))?;
+                    if let Some(d) = display {
+                        wire.push_str(&format!(" display={d}"));
+                    }
+                    argv.extend(["do".into(), wire]);
+                }
+                (None, Some(d)) if display.is_some() => {
+                    let dur = n("duration_ms").map(|t| format!(" dur={t}")).unwrap_or_default();
+                    argv.extend(["do".into(), format!("swipe_dir {d} display={}{dur}", display.unwrap_or(0))]);
+                }
+                (None, Some(d)) => {
+                    argv.extend(["swipe".into(), d]);
+                    argv.extend(n("duration_ms").map(|d| d.to_string()));
+                }
+                (None, None) => return Err((-32602, "swipe: give \"direction\" or \"pinch\"".into())),
+            }
             Via::Act
         }
         "go" => {
@@ -1139,7 +1262,11 @@ fn call_tool(name: &str, args: &Value, engine: &Engine, device: Option<&str>, br
             return Ok(Out::Text(engine.watch(dev, s("until").as_deref(), timeout)));
         }
         "open" => {
-            argv.extend(["open".into(), need("app")?]);
+            match n("display").filter(|d| *d != 0) {
+                // Package or PKG/.Activity (a label with spaces can't ride the wire).
+                Some(d) => argv.extend(["do".into(), format!("am_start n={} display={d}", need("app")?)]),
+                None => argv.extend(["open".into(), need("app")?]),
+            }
             Via::Act
         }
         "close" => {
@@ -1205,19 +1332,173 @@ fn call_tool(name: &str, args: &Value, engine: &Engine, device: Option<&str>, br
         }
         _ => return Err((-32602, format!("unknown tool: {name}"))),
     };
+    // `scroll`: bring the target into view first, a page at a time.
+    let scrolled = match (b("scroll"), name) {
+        (true, "tap") => s("target").filter(|t| row_ref(t).is_none()),
+        (true, "find") => s("selector"),
+        _ => None,
+    }
+    .map(|sel| {
+        let run = |argv: &[String], act: bool| -> Reply {
+            if !engine.in_process() {
+                child(engine, device.clone(), argv)
+            } else if act {
+                engine.act(dev, argv, true, true)
+            } else {
+                engine.run(dev, argv)
+            }
+        };
+        let look = ["find".to_string(), sel];
+        let page = ["do".to_string(), "scroll_forward".to_string()];
+        let seq = ["do".to_string(), "event_seq".to_string()];
+        scroll_until(SCROLL_MAX, || run(&look, false).0, || {
+            let since = run(&seq, false).1;
+            let (ok, text) = run(&page, false);
+            if !ok || text.contains("ERR:") {
+                return Err(());
+            }
+            // The scroll animates: wait until it stops, or a tap on what it
+            // brought into view lands mid-scroll and only stops the list.
+            if let Some(n) = since.trim().strip_prefix("seq=") {
+                run(&["do".to_string(), format!("settle since={n} first_ms=300 idle_ms=300 timeout_ms=3000")], false);
+            }
+            Ok(())
+        })
+    });
     let (ok, text) = match via {
-        Via::Run | Via::Act if !engine.in_process() => child(engine, device, &argv),
+        Via::Run | Via::Act if !engine.in_process() => child(engine, device.clone(), &argv),
         Via::Run => engine.run(dev, &argv),
         Via::Act => engine.act(dev, &argv, observe, brief),
         Via::Child => {
-            let r = child(engine, device, &argv);
+            let r = child(engine, device.clone(), &argv);
             if matches!(name, "use" | "drop") {
                 engine.forget();
             }
             r
         }
     };
+    // A tap whose target isn't drawn yet (an app still loading, a dialog
+    // sliding in): if the screen is moving, let it settle and look once more.
+    // A still screen fails at once, as before.
+    let by_target = name == "tap" && s("target").is_some_and(|t| row_ref(&t).is_none());
+    let (ok, text) = if !ok && by_target && text.contains("NOT_FOUND") && engine.in_process() {
+        // Look again each time the screen moves and settles: a dialog from
+        // another process can draw after a quiet gap. Stop at the first
+        // window with no events (the screen is still) or at the cap.
+        let started = Instant::now();
+        let mut last = (ok, text);
+        while started.elapsed() < Duration::from_millis(TAP_WAIT_CAP_MS) {
+            let seq = engine.run(dev, &["do".to_string(), "event_seq".to_string()]).1;
+            let Some(n) = seq.trim().strip_prefix("seq=").and_then(|n| n.parse::<u64>().ok()) else { break };
+            let wire = format!("settle since={n} first_ms={TAP_MOVING_MS} idle_ms=300 timeout_ms={TAP_WAIT_CAP_MS}");
+            if !moved_then_settled(&engine.run(dev, &["do".to_string(), wire]).1) {
+                break;
+            }
+            let again = engine.act(dev, &argv, observe, brief);
+            if again.0 {
+                last = (true, format!("waited {} ms for the screen to settle\n{}", started.elapsed().as_millis(), again.1));
+                break;
+            }
+            last = again;
+        }
+        last
+    } else {
+        (ok, text)
+    };
+    let text = match scrolled {
+        Some(Scrolled { times: 0, found: true }) | None => text,
+        Some(Scrolled { times, found: true }) => format!("scrolled {times}×\n{text}"),
+        Some(Scrolled { times, found: false }) => format!("{text}\n(scrolled {times}× to the end of the list)"),
+    };
+    // A bare word is a class name in selector syntax; if it missed but a node
+    // shows it as text, say how to name that node (nothing is retried).
+    let word = match name {
+        "tap" | "wait" => s("target"),
+        "find" => s("selector"),
+        _ => None,
+    };
+    let missed = text.contains("NOT_FOUND") || text.contains("expected class name") || (name == "wait" && text.contains("TIMEOUT"));
+    let text = match word {
+        Some(w) if !ok && missed && bare_word(&w) => {
+            let look = ["find".to_string(), format!(":has-text({w:?})")];
+            let shown = if engine.in_process() { engine.run(dev, &look).0 } else { child(engine, device.clone(), &look).0 };
+            if shown { format!("{text}\n{}", class_word_hint(&w)) } else { text }
+        }
+        _ => text,
+    };
     Ok(Out::Text((ok, text)))
+}
+
+/// How long a missed tap watches for screen events before calling the
+/// screen still (and failing): a tap's second look, since another app's
+/// window (a permission dialog) can be quiet that long before it draws.
+const TAP_MOVING_MS: u32 = 400;
+
+/// The most a missed tap spends waiting on a moving screen.
+const TAP_WAIT_CAP_MS: u64 = 4000;
+
+/// The `settle` reply after a missed tap: the screen was moving and has
+/// settled (or never stopped within the cap), so the target may be there now.
+fn moved_then_settled(reply: &str) -> bool {
+    reply.contains("changed=1") || reply.contains("TIMEOUT:settle")
+}
+
+/// The daemon's two-finger `pinch` for `swipe {pinch, x?, y?}`.
+fn pinch_wire(dir: &str, x: Option<i64>, y: Option<i64>) -> Result<String, String> {
+    if dir != "in" && dir != "out" {
+        return Err(format!("swipe: pinch is \"in\" or \"out\", not {dir:?}"));
+    }
+    let mut w = format!("pinch {dir}");
+    if let (Some(x), Some(y)) = (x, y) {
+        w.push_str(&format!(" x={x} y={y}"));
+    }
+    Ok(w)
+}
+
+/// A node's screen rectangle: left, top, right, bottom.
+type Bounds = (i64, i64, i64, i64);
+
+/// The first match's `[l,t][r,b]` in `find` output.
+fn find_bounds(out: &str) -> Option<Bounds> {
+    let line = out.lines().next()?.strip_prefix('[')?;
+    let (a, rest) = line.split_once("][")?;
+    let b = rest.split(']').next()?;
+    let (l, t) = a.split_once(',')?;
+    let (r, bt) = b.split_once(',')?;
+    Some((l.parse().ok()?, t.parse().ok()?, r.parse().ok()?, bt.parse().ok()?))
+}
+
+/// A target with no selector syntax: one word, read as a class name.
+fn bare_word(t: &str) -> bool {
+    !t.is_empty() && !t.chars().any(|c| c.is_whitespace() || "@#.:[]()\"'=*>~+,".contains(c))
+}
+
+fn class_word_hint(w: &str) -> String {
+    format!("No class \"{w}\", but a node shows that text: target it with :has-text({w:?}).")
+}
+
+/// Most pages `scroll: true` turns before giving up.
+const SCROLL_MAX: u32 = 10;
+
+#[derive(Debug, PartialEq)]
+struct Scrolled {
+    times: u32,
+    found: bool,
+}
+
+/// Looks with [found], and while it misses scrolls a page with [scroll]:
+/// at most [max] pages, and not past a page that can't move (the end).
+fn scroll_until(max: u32, mut found: impl FnMut() -> bool, mut scroll: impl FnMut() -> Result<(), ()>) -> Scrolled {
+    let mut times = 0;
+    loop {
+        if found() {
+            return Scrolled { times, found: true };
+        }
+        if times == max || scroll().is_err() {
+            return Scrolled { times, found: false };
+        }
+        times += 1;
+    }
 }
 
 /// Tools a `batch` step may be: the ones that act or wait on the screen.
@@ -1235,6 +1516,13 @@ fn batch(args: &Value, engine: &Engine) -> Reply {
     let steps = json::obj_get(args, "steps").and_then(json::as_arr).unwrap_or(&[]);
     if steps.is_empty() || steps.len() > BATCH_MAX {
         return (false, format!("ERR:BAD_ARG:batch needs 1 to {BATCH_MAX} steps"));
+    }
+    // A typo anywhere stops the batch before its first step runs.
+    for step in steps {
+        let name = json::obj_get(step, "tool").and_then(json::as_str).unwrap_or("");
+        if let Some((k, known)) = unknown_arg(name, step) {
+            return (false, format!("ERR:BAD_ARG:{name}: unknown argument \"{k}\"; it takes {}", known.join(", ")));
+        }
     }
     if !engine.in_process() {
         return (false, "ERR:PRECONDITION:batch needs the daemon reachable through the local adb server".into());
@@ -1526,6 +1814,22 @@ mod tests {
         assert!(r.contains(r#""id":"a""#) && r.contains(PROTOCOL_VERSIONS[0]), "{r}");
     }
 
+    /// scripts/agent-bench.py's yardstick: ASCII chars / 4 (rounded up) + one per other char.
+    fn approx_tokens(s: &str) -> usize {
+        let ascii = s.chars().filter(|c| c.is_ascii()).count();
+        ascii.div_ceil(4) + (s.chars().count() - ascii)
+    }
+
+    #[test]
+    fn session_cost_stays_within_budget() {
+        // Every session carries the instructions and the tool list; they
+        // were 311 + 2668 before trimming (the bench counts tools/list with
+        // JSON spacing; the raw reply here is a little smaller). Raise only with a reason.
+        let list = handle(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#, &Engine::new(&[])).unwrap();
+        let cost = approx_tokens(INSTRUCTIONS) + approx_tokens(&list);
+        assert!(cost <= 1900, "instructions + tools/list = {cost} approx tokens");
+    }
+
     #[test]
     fn notifications_get_no_reply() {
         assert!(handle(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#, &Engine::new(&[])).is_none());
@@ -1573,6 +1877,111 @@ mod tests {
         assert!(r.contains("BAD_ARG") && r.contains(r#""isError":true"#), "{r}");
         let many = vec![r#"{"tool":"go","key":"back"}"#; super::BATCH_MAX + 1].join(",");
         assert!(call(&format!(r#"{{"steps":[{many}]}}"#)).contains("BAD_ARG"));
+    }
+
+    #[test]
+    fn unknown_arguments_are_refused_before_anything_runs() {
+        let call = |name: &str, args: &str| {
+            handle(&format!(r#"{{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{{"name":"{name}","arguments":{args}}}}}"#), &Engine::new(&[])).unwrap()
+        };
+        let r = call("tap", r#"{"targt":"OK"}"#);
+        assert!(r.contains("-32602") && r.contains("targt") && r.contains("target"), "{r}");
+        // A typo in a later step stops the batch before its first step runs.
+        let r = call("batch", r#"{"steps":[{"tool":"go","key":"back"},{"tool":"tap","targt":"OK"}]}"#);
+        assert!(r.contains("BAD_ARG") && r.contains("targt") && r.contains(r#""isError":true"#), "{r}");
+    }
+
+    #[test]
+    fn scrolling_stops_when_found_at_the_end_or_at_the_cap() {
+        // Found on the third look: two scrolls.
+        let mut looks = 0;
+        let r = scroll_until(10, || { looks += 1; looks == 3 }, || Ok(()));
+        assert_eq!(r, Scrolled { times: 2, found: true });
+        // The list ends first.
+        let mut scrolls = 0;
+        let r = scroll_until(10, || false, || { scrolls += 1; if scrolls > 1 { Err(()) } else { Ok(()) } });
+        assert_eq!(r, Scrolled { times: 1, found: false });
+        // Never there: gives up after the cap.
+        let r = scroll_until(3, || false, || Ok(()));
+        assert_eq!(r, Scrolled { times: 3, found: false });
+        // Already on screen: no scroll.
+        assert_eq!(scroll_until(10, || true, || Ok(())), Scrolled { times: 0, found: true });
+    }
+
+    #[test]
+    fn tap_and_find_take_scroll() {
+        let has = |name: &str| super::tools().iter().find(|t| t.name == name).unwrap().schema.contains(r#""scroll""#);
+        assert!(has("tap") && has("find"));
+    }
+
+    #[test]
+    fn a_bare_word_is_one_with_no_selector_syntax() {
+        for w in ["다음", "Gmail", "OK"] {
+            assert!(bare_word(w), "{w}");
+        }
+        for w in ["@3", "#shutter_button", "Button[text=OK]", ":has-text(\"x\")", "two words", "a.b", ""] {
+            assert!(!bare_word(w), "{w}");
+        }
+    }
+
+    #[test]
+    fn a_missed_bare_word_that_is_on_screen_as_text_gets_a_hint() {
+        let h = class_word_hint("다음");
+        assert!(h.contains(r#":has-text("다음")"#) && h.contains("class"), "{h}");
+    }
+
+    #[test]
+    fn a_missed_tap_is_retried_only_if_the_screen_was_moving() {
+        // Quiet screen: the target really isn't there; fail now.
+        assert!(!moved_then_settled("ok elapsed=150 changed=0"));
+        // It was drawing and has settled: look again.
+        assert!(moved_then_settled("ok elapsed=840 changed=1"));
+        // Still moving at the cap: look once more anyway.
+        assert!(moved_then_settled("ERR:TIMEOUT:settle:idle_ms=300 timeout_ms=4000"));
+        assert!(!moved_then_settled("ERR:DEVICE_GONE:x"));
+    }
+
+    #[test]
+    fn toasts_after_an_action_become_one_line_each() {
+        assert_eq!(toast_lines("저장됨\n2단계 남음"), "\ntoast: 저장됨\ntoast: 2단계 남음");
+        assert_eq!(toast_lines(""), "");
+        // An older daemon without `toasts`: nothing to add.
+        assert_eq!(toast_lines("ERR:UNKNOWN_CMD:toasts"), "");
+    }
+
+    #[test]
+    fn find_output_gives_the_first_match_bounds() {
+        let out = "[63,2166][272,2244] center=(167,2205)\tclass=android.widget.TextView\n[0,0][10,10] center=(5,5)";
+        assert_eq!(find_bounds(out), Some((63, 2166, 272, 2244)));
+        assert_eq!(find_bounds("ERR:NOT_FOUND:no node matched"), None);
+    }
+
+    #[test]
+    fn screenshot_takes_a_target() {
+        let shot = super::tools().iter().find(|t| t.name == "screenshot").unwrap();
+        assert!(shot.schema.contains(r#""target""#));
+    }
+
+    #[test]
+    fn swipe_takes_a_direction_or_a_pinch() {
+        let swipe = super::tools().iter().find(|t| t.name == "swipe").unwrap();
+        assert!(swipe.schema.contains(r#""pinch""#));
+        let r = handle(r#"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"swipe","arguments":{}}}"#, &Engine::new(&[])).unwrap();
+        assert!(r.contains("-32602") && r.contains("pinch"), "{r}");
+        assert_eq!(pinch_wire("out", Some(540), Some(1200)).as_deref(), Ok("pinch out x=540 y=1200"));
+        assert_eq!(pinch_wire("in", None, None).as_deref(), Ok("pinch in"));
+        assert!(pinch_wire("sideways", None, None).is_err());
+    }
+
+    #[test]
+    fn ui_tap_swipe_and_open_take_a_display() {
+        for name in ["ui", "tap", "swipe", "open"] {
+            let t = super::tools().iter().find(|t| t.name == name).unwrap();
+            assert!(t.schema.contains(r#""display""#), "{name}");
+        }
+        // Another display: tap by x,y (rows and text are the default display's).
+        let r = handle(r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"tap","arguments":{"target":"OK","display":2}}}"#, &Engine::new(&[])).unwrap();
+        assert!(r.contains("-32602") && r.contains("x, y"), "{r}");
     }
 
     #[test]

@@ -64,6 +64,40 @@ internal class NodeActions(private val ua: UiAutomation) {
     }
 
     /**
+     * `scroll_forward`: scroll the biggest list in the app's windows one page
+     * on, through ACTION_SCROLL_FORWARD (no fling, no guessed swipe distance).
+     * `ok scrolled`; `ERR:scroll-end` when lists exist but none can go on;
+     * `ERR:no-scrollable` when there is none.
+     */
+    fun scrollForward(): ByteArray {
+        val roots = ua.windows?.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }?.mapNotNull { it.root }
+            ?.takeIf { it.isNotEmpty() } ?: listOfNotNull(ua.rootInActiveWindow)
+        var best: AccessibilityNodeInfo? = null
+        var bestArea = -1L
+        var anyScrollable = false
+        val r = android.graphics.Rect()
+        for (root in roots) {
+            val q: Deque<AccessibilityNodeInfo> = ArrayDeque()
+            q.add(root)
+            while (q.isNotEmpty()) {
+                val n = q.removeFirst()
+                if (n.isScrollable && n.isVisibleToUser) {
+                    anyScrollable = true
+                    if (n.actionList.any { it.id == AccessibilityNodeInfo.ACTION_SCROLL_FORWARD }) {
+                        n.getBoundsInScreen(r)
+                        val area = r.width().toLong() * r.height()
+                        if (area > bestArea) { best = n; bestArea = area }
+                    }
+                }
+                for (i in 0 until n.childCount) n.getChild(i)?.let { q.add(it) }
+            }
+        }
+        val n = best ?: return err(if (anyScrollable) "scroll-end" else "no-scrollable")
+        val moved = try { n.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD) } catch (_: Throwable) { false }
+        return if (moved) ok("ok scrolled") else err("scroll-end")
+    }
+
+    /**
      * Insert the current system clipboard into the focused EditText (or
      * the one matched by `selectorStr`, if non-null) via
      * `AccessibilityNodeInfo.ACTION_PASTE`. The clipboard itself

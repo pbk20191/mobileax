@@ -215,7 +215,19 @@ internal class Input(private val ua: UiAutomation) {
      * launcher just after Recents opens took 5 s) must not hold up the
      * replies the stream paces itself by.
      */
-    fun motion(downTime: Long, eventTime: Long, action: Int, x: Int, y: Int, sync: Boolean = true) {
+    /** `InputEvent.setDisplayId` (hidden, SDK 29+): send an event to another display. */
+    private val setDisplayId: java.lang.reflect.Method? = try {
+        android.view.InputEvent::class.java.getMethod("setDisplayId", Int::class.javaPrimitiveType)
+    } catch (_: Throwable) {
+        null
+    }
+
+    private fun onDisplay(ev: MotionEvent, display: Int) {
+        if (display == 0) return
+        checkNotNull(setDisplayId) { "this Android can't send input to display $display" }.invoke(ev, display)
+    }
+
+    fun motion(downTime: Long, eventTime: Long, action: Int, x: Int, y: Int, sync: Boolean = true, display: Int = 0) {
         // Build a full-fidelity MotionEvent so gesture detectors that check
         // toolType + pressure (launcher swipes, ViewPager flings, AndroidX
         // GestureDetector) treat it as a real finger. The 6-arg
@@ -244,6 +256,24 @@ internal class Input(private val ua: UiAutomation) {
             0
         )
         try {
+            onDisplay(ev, display)
+            inject(ev, sync)
+        } finally {
+            ev.recycle()
+        }
+    }
+
+    /** [motion] with one finger per entry of [xs]/[ys] (pointer ids 0, 1, …). */
+    fun multiMotion(downTime: Long, eventTime: Long, action: Int, xs: IntArray, ys: IntArray, sync: Boolean = true, display: Int = 0) {
+        val n = xs.size
+        val props = Array(n) { i -> PointerProperties().apply { id = i; toolType = MotionEvent.TOOL_TYPE_FINGER } }
+        val coords = Array(n) { i -> PointerCoords().apply { x = xs[i].toFloat(); y = ys[i].toFloat(); pressure = 1.0f; size = 1.0f } }
+        val ev = MotionEvent.obtain(
+            downTime, eventTime, action, n, props, coords,
+            0, 0, 1.0f, 1.0f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0
+        )
+        try {
+            onDisplay(ev, display)
             inject(ev, sync)
         } finally {
             ev.recycle()

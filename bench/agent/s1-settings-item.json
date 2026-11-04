@@ -5,6 +5,12 @@
   {
    "tool": "close",
    "args": {
+    "package": "com.google.android.settings.intelligence"
+   }
+  },
+  {
+   "tool": "close",
+   "args": {
     "package": "com.android.settings"
    }
   },
