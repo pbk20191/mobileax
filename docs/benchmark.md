@@ -70,9 +70,16 @@ a check). No LLM runs, so it is free and repeatable. Spec:
   since MCP has no device shell.
 - Tokens and time are medians over runs. Action replies report what changed
   on screen, which depends on timing, so tokens vary a little from run to run.
-- **Stable means:** calls identical, total tokens within ±5%. Per-scenario
-  tokens are reported, but s4 (camera start-up after the permission tap) can
-  move by ~20% on its own.
+- **Stable means:** calls identical, total tokens within ±5%. The `±%`
+  column is the run-to-run spread; above 5% it is marked `!` and printed as
+  `UNSTABLE`, but does not fail the run. s2 (whether the 4th swipe still
+  scrolls), s3 and s4 (camera start-up after the permission tap) routinely
+  exceed it: the action replies differ, not the calls.
+- **Known flake (a tool defect, not the harness):** on a loaded emulator a cold
+  Settings start sometimes makes `open` settle on an empty screen (`0 rows`),
+  and the next tap misses. Seen in about 1 of 15 Settings opens. Fixing that
+  settle comes first; the baseline below predates s5's current setup and is
+  re-recorded after.
 
 ```
 ANDROID_HOME=… python -I scripts/agent-bench.py --runs 3 --compare bench/agent/baseline.json
@@ -95,10 +102,10 @@ the unloaded figures); compare time only within one session:
 | Scenario | Task | Measures |
 |---|---|---|
 | s1 | Settings → "디스플레이 및 터치" | basic navigation |
-| s2 | Accessibility list, 4 swipes to the end, last item | scrolling (later: find-with-scroll) |
+| s2 | Accessibility list, 4 swipes (the end; the 4th sometimes still scrolls), last item | scrolling (later: find-with-scroll) |
 | s3 | Settings search "배터리" → result | typing, result check |
 | s4 | Fresh camera: location-tag prompt, location permission | popups (later: auto-handling) |
-| s5 | Recents, one `ui` | output size of a heavy screen |
+| s5 | Recents (two fixed cards), one `ui` | output size of a full-screen system UI |
 
 Findings from writing the scenarios:
 

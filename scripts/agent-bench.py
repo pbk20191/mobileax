@@ -94,21 +94,28 @@ class McpClient:
             self.p.kill()
 
 
-def adb_runner(device=None):
-    """Runs `adb ARGS…` on the host (setup only: MCP has no device shell)."""
+def adb_runner(device=None, exe=None):
+    """Runs `adb ARGS…` on the host (setup only: MCP has no device shell).
+    Raises on a non-zero exit, so the scenario records it."""
     sdk = os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT")
-    exe = os.path.join(sdk, "platform-tools", "adb") if sdk else "adb"
+    exe = exe or (os.path.join(sdk, "platform-tools", "adb") if sdk else "adb")
     pre = [exe] + (["-s", device] if device else [])
 
     def run(args):
-        subprocess.run(pre + args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=TIMEOUT_S)
+        r = subprocess.run(pre + args, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=TIMEOUT_S)
+        if r.returncode != 0:
+            raise RuntimeError(f"exit {r.returncode}: {r.stderr.decode('utf-8', 'replace').strip()}")
     return run
 
 
 def run_scenario(client, scenario, adb=None):
+    setup_error = None
     for s in scenario.get("setup", []):
         if "adb" in s:
-            adb(s["adb"])
+            try:
+                adb(s["adb"])
+            except Exception as e:   # no adb, timeout, non-zero exit: record it, keep going
+                setup_error = setup_error or f"adb {' '.join(s['adb'])}: {type(e).__name__}: {e}"[:200]
         else:
             client.call(s["tool"], s.get("args", {}))
     steps = []
@@ -117,7 +124,8 @@ def run_scenario(client, scenario, adb=None):
         steps.append({"tool": s["tool"], "args": s.get("args", {}), "tokens": approx_tokens(text), "chars": len(text),
                       "ms": round(ms, 1), "error": text[:200] if err else None,
                       "reply": text[:160]})
-    return {"name": scenario["name"], "ok": all(s["error"] is None for s in steps), "calls": len(steps),
+    return {"name": scenario["name"], "ok": setup_error is None and all(s["error"] is None for s in steps),
+            "setup_error": setup_error, "calls": len(steps),
             "tokens": sum(s["tokens"] for s in steps), "chars": sum(s["chars"] for s in steps),
             "ms": round(sum(s["ms"] for s in steps), 1), "steps": steps}
 
@@ -126,9 +134,17 @@ def summarize(runs):
     """Several runs of one scenario → one row. Tokens and time are medians:
     action replies report what changed on screen, which depends on timing."""
     first = runs[0]
-    return {"name": first["name"], "ok": all(r["ok"] for r in runs), "calls": first["calls"],
+    row = {"name": first["name"], "ok": all(r["ok"] for r in runs), "calls": first["calls"],
             "tokens": round(statistics.median(r["tokens"] for r in runs)), "tokens_spread": max(r["tokens"] for r in runs) - min(r["tokens"] for r in runs),
             "ms": round(statistics.median(r["ms"] for r in runs), 1), "runs": runs}
+    row["unstable"] = row["tokens_spread"] > 0.05 * row["tokens"]
+    return row
+
+
+def spread_pct(row):
+    """Run-to-run token spread as a percentage of the median, `!` above 5%."""
+    pct = 100 * row["tokens_spread"] / row["tokens"] if row["tokens"] else 0
+    return f"{pct:.0f}" + ("!" if row["unstable"] else "")
 
 
 def default_mobax():
@@ -158,9 +174,7 @@ def main():
     client = McpClient(a.mobax, a.device)
     try:
         tools = approx_tokens(client.tools_list_text())
-        adb = (lambda args: subprocess.run([a.adb] + (["-s", a.device] if a.device else []) + args,
-                                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                            timeout=TIMEOUT_S)) if a.adb else adb_runner(a.device)
+        adb = adb_runner(a.device, a.adb)
         rows = [summarize([run_scenario(client, s, adb) for _ in range(a.runs)]) for s in scenarios]
     finally:
         client.close()
@@ -174,18 +188,27 @@ def main():
     def delta(new, old):
         return "" if old is None else f" ({new - old:+d})"
 
-    print(f"{'scenario':<24} {'ok':<3} {'calls':>5} {'tokens':>14} {'±':>4} {'ms(p50)':>9}")
+    print(f"{'scenario':<24} {'ok':<3} {'calls':>5} {'tokens':>14} {'±%':>5} {'ms(p50)':>9}")
     for r in rows:
         o = base.get(r["name"], {})
         print(f"{r['name']:<24} {'y' if r['ok'] else 'N':<3} {str(r['calls']) + delta(r['calls'], o.get('calls')):>5} "
-              f"{str(r['tokens']) + delta(r['tokens'], o.get('tokens')):>14} {r['tokens_spread']:>4} {r['ms']:>9}")
+              f"{str(r['tokens']) + delta(r['tokens'], o.get('tokens')):>14} {spread_pct(r):>5} {r['ms']:>9}")
     total = sum(r["tokens"] for r in rows)
     print(f"{'tools/list (per session)':<24} {'':<3} {'':>5} {str(tools) + delta(tools, base.get('__tools__', {}).get('tokens')):>14}")
     print(f"{'total (scenarios)':<24} {'':<3} {sum(r['calls'] for r in rows):>5} {total:>14}")
     for r in rows:
         if not r["ok"]:
-            bad = next(s for run in r["runs"] for s in run["steps"] if s["error"])
-            print(f"FAILED {r['name']}: {bad['tool']} {json.dumps(bad['args'], ensure_ascii=False)}: {bad['error']}", file=sys.stderr)
+            setup = next((run["setup_error"] for run in r["runs"] if run.get("setup_error")), None)
+            bad = next((s for run in r["runs"] for s in run["steps"] if s["error"]), None)
+            if setup:
+                print(f"FAILED {r['name']}: setup: {setup}", file=sys.stderr)
+            if bad:
+                print(f"FAILED {r['name']}: {bad['tool']} {json.dumps(bad['args'], ensure_ascii=False)}: {bad['error']}",
+                      file=sys.stderr)
+    for r in rows:
+        if r["unstable"]:
+            print(f"UNSTABLE {r['name']}: token spread {r['tokens_spread']} > 5% of {r['tokens']} across runs",
+                  file=sys.stderr)
 
     if a.out:
         with open(a.out, "w", encoding="utf-8") as f:

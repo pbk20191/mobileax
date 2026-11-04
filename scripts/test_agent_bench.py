@@ -57,6 +57,21 @@ class AgentBenchTest(unittest.TestCase):
         self.assertEqual(r["tokens"], 200)
         self.assertEqual(r["tokens_spread"], 200)
 
+    def test_summary_flags_spread_over_five_percent(self):
+        runs = [{"name": "x", "ok": True, "calls": 2, "tokens": t, "ms": 1.0} for t in (100, 100, 110)]
+        self.assertTrue(ab.summarize(runs)["unstable"])
+        runs = [{"name": "x", "ok": True, "calls": 2, "tokens": t, "ms": 1.0} for t in (100, 100, 104)]
+        self.assertFalse(ab.summarize(runs)["unstable"])
+
+    def test_failed_adb_setup_fails_the_scenario_and_keeps_going(self):
+        def broken(args):
+            raise FileNotFoundError("adb")
+        fake = FakeClient({"find": ("hit", False)})
+        r = ab.run_scenario(fake, {"name": "x", "setup": [{"adb": ["shell", "true"]}], "steps": [],
+                                   "check": {"tool": "find", "args": {}}}, adb=broken)
+        self.assertFalse(r["ok"])
+        self.assertIn("adb", r["setup_error"])
+
 
 if __name__ == "__main__":
     unittest.main()
