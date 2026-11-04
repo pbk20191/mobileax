@@ -26,6 +26,13 @@ interface Host {
     /** A startup line for /data/local/tmp/mobax.log. */
     fun startupLine(line: String)
 
+    /**
+     * The Instrumentation UiAutomator's UiDevice runs on, handing it [ua]
+     * (UiDevice is one per process). The instrumentation's own; the
+     * app_process daemon, which has none, makes a stand-in.
+     */
+    fun instrumentation(ua: UiAutomation): android.app.Instrumentation
+
     /** Starts [cmd], one line of sh, as the shell uid. Blocks briefly: off the main looper. */
     fun openShell(cmd: String, mergeErr: Boolean, input: Shell.Input): Shell.ShellProc
 

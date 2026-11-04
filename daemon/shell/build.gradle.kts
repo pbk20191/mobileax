@@ -63,4 +63,6 @@ kotlin {
 
 dependencies {
     implementation(project(":daemon:core"))
+    // InstrumentationRegistry, for the stand-in Instrumentation (ShellHost).
+    implementation("androidx.test:monitor:1.8.0")
 }

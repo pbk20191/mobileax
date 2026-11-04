@@ -76,6 +76,7 @@ data object Main {
             connectedUiAutomation(ht.looper).also { Logx.boot("mobaxd ua-looper=thread") }
         }
         registerShutdownHook(ua)
+        ShellHost.registerInstrumentation(ua)
         try { ua.setRunAsMonkey(true) } catch (t: Throwable) { Logx.bootWarn("setRunAsMonkey failed", t) }
         return ua
     }

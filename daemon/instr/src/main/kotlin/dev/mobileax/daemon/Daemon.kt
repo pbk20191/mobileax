@@ -5,8 +5,6 @@ import android.app.UiAutomation
 import android.content.Context
 import android.os.Bundle
 import androidx.test.platform.app.InstrumentationRegistry
-import androidx.test.uiautomator.Configurator
-import androidx.test.uiautomator.UiDevice
 
 /**
  * Process-wide handles, all read from [InstrumentationRegistry] (registered
@@ -34,6 +32,9 @@ internal object InstrHost : Host {
         else i.sendStatus(0, Bundle().apply { putString("mobaxd", line) })
     }
 
+    /** Ours: UiDevice gets the UiAutomation the framework connected for it. */
+    override fun instrumentation(ua: UiAutomation): Instrumentation = instr
+
     override fun openShell(cmd: String, mergeErr: Boolean, input: Shell.Input): Shell.ShellProc =
         UaShell.open(cmd, mergeErr, input)
 }
@@ -41,7 +42,3 @@ internal object InstrHost : Host {
 /** Connected on first use; the same flags return the cached instance. */
 internal val ua: UiAutomation get() = instr.getUiAutomation(UA_FLAGS)
 
-internal val device: UiDevice by lazy {
-    Configurator.getInstance().uiAutomationFlags = UA_FLAGS
-    UiDevice.getInstance(instr)
-}

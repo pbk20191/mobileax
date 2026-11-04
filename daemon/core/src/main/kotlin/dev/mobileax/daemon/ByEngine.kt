@@ -1,6 +1,5 @@
 package dev.mobileax.daemon
 
-import android.app.Instrumentation
 import android.app.UiAutomation
 import android.content.Context
 import android.graphics.Point
@@ -40,17 +39,10 @@ import java.util.regex.Pattern
  *   by_pinch in|out [pct=0.8] [nth=N] q=Q
  *   by_drag to=X,Y [speed=N] [nth=N] q=Q
  *
- * UiDevice runs on a shim Instrumentation that hands it our UiAutomation,
- * so it works the same in the app_process and the instrumentation builds.
+ * UiDevice runs on [Host.instrumentation]: the instrumentation's own, or in
+ * the app_process daemon a stand-in that hands it our UiAutomation.
  */
 internal class ByEngine(private val ua: UiAutomation, private val ctx: Context, private val events: UiEvents) {
-
-    private class Shim(private val ua: UiAutomation, private val ctx: Context) : Instrumentation() {
-        override fun getUiAutomation(): UiAutomation = ua
-        override fun getUiAutomation(flags: Int): UiAutomation = ua
-        override fun getContext(): Context = ctx
-        override fun getTargetContext(): Context = ctx
-    }
 
     private val device: UiDevice by lazy {
         Configurator.getInstance().apply {
@@ -59,7 +51,9 @@ internal class ByEngine(private val ua: UiAutomation, private val ctx: Context, 
             // it 10 s. Settling is ours to do (settle, waits), so don't.
             waitForIdleTimeout = 0
         }
-        UiDevice.getInstance(Shim(ua, ctx)).also { events.reclaim() }   // it took the event listener
+        // The flags above are the ones [ua] was connected with: asked for
+        // other ones, Instrumentation.getUiAutomation would reconnect it.
+        UiDevice.getInstance(Host.it.instrumentation(ua)).also { events.reclaim() }   // it took the event listener
     }
 
     fun handle(head: String, cmd: String): ByteArray? {

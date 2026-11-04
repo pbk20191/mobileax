@@ -2,10 +2,13 @@ package dev.mobileax.daemon
 
 import android.app.Application
 import android.app.Instrumentation
+import android.app.UiAutomation
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ApplicationInfo
+import android.os.Bundle
 import android.os.Looper
+import androidx.test.platform.app.InstrumentationRegistry
 import android.os.ParcelFileDescriptor
 import dev.mobileax.daemon.Shell.Input
 import dev.mobileax.daemon.Shell.ShellProc
@@ -95,6 +98,31 @@ internal object ShellHost : Host {
     override val selfPackage: String? = null
     /** The host redirects stdout and stderr to /data/local/tmp/mobax.log. */
     override fun startupLine(line: String) = println(line)
+    @Volatile private var standIn: Instrumentation? = null
+
+    /**
+     * No instrumentation runs here: a stand-in handing out our UiAutomation
+     * and Context, registered with InstrumentationRegistry so androidx.test
+     * code that looks it up (UiDevice.getInstance(), Configurator users)
+     * finds it, as it would in the instrumentation daemon. Main calls this
+     * once UiAutomation is connected.
+     */
+    fun registerInstrumentation(ua: UiAutomation) {
+        val i = StandIn(ua)
+        standIn = i
+        InstrumentationRegistry.registerInstance(i, Bundle())
+    }
+
+    override fun instrumentation(ua: UiAutomation): Instrumentation =
+        standIn ?: StandIn(ua).also { standIn = it }
+
+    private class StandIn(private val ua: UiAutomation) : Instrumentation() {
+        override fun getUiAutomation(): UiAutomation = ua
+        override fun getUiAutomation(flags: Int): UiAutomation = ua
+        override fun getContext(): Context = ShellContexts.appContext()
+        override fun getTargetContext(): Context = ShellContexts.appContext()
+    }
+
     /** We are the shell: the command is our own child, `sh -c`. */
     override fun openShell(cmd: String, mergeErr: Boolean, input: Input): ShellProc = ChildProc(cmd, mergeErr, input)
 }

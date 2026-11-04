@@ -18,7 +18,7 @@ internal object DaemonInit {
     /** Runs on a Work thread: connecting UiAutomation blocks until its callback arrives on main. */
     fun connect(): Pair<Context, UiAutomation> {
         val ua = try {
-            dev.mobileax.daemon.ua.also { device }   // UiDevice shares it: same UA_FLAGS
+            dev.mobileax.daemon.ua   // ByEngine's UiDevice asks for it with the same UA_FLAGS
         } catch (t: Throwable) {
             throw IllegalStateException(
                 "UiAutomation unavailable: ${t.message} — another UiAutomation (e.g. a UiAutomator test) may be connected", t
