@@ -11,6 +11,7 @@ internal class Server(private val h: Handlers) {
     class Handlers {
         lateinit var sysCtx: Context
         lateinit var dumper: Dumper
+        lateinit var byStudy: ByStudy
         lateinit var shot: Screenshot
         lateinit var input: Input
         lateinit var installer: Installer
@@ -40,6 +41,7 @@ internal class Server(private val h: Handlers) {
      */
     fun respond(head: String, cmd: String): ByteArray? {
         when (head) {
+            "by_find" -> return h.byStudy.find(cmd)
             "info" -> return utf8(h.shot.sourceSize().x.toString() + " " + h.shot.sourceSize().y)
             "pm_list" -> return runPmList(cmd)
             "pm_path" -> return runPmPath(cmd)
