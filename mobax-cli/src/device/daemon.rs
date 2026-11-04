@@ -448,17 +448,20 @@ fn device_sh(serial: &str, cmd: &str) -> String {
 /// system_server takes a moment to drop its UiAutomation. Returns at once
 /// when nothing ran (saves ~500ms on a clean boot).
 fn stop_daemon(serial: &str) -> io::Result<()> {
-    // `[m]obaxd`: the pattern can't match the shell running it.
+    // By process name (the jar runs as --nice-name=mobaxd): `pkill -f` on a
+    // pattern also matched the shell running it, which died before saying
+    // it had killed anything, so the daemon outlived `drop` and `use`.
     let out = device_sh(serial, &format!(
-        "pkill -9 -f '[m]obaxd' && echo jar; pidof {PKG} >/dev/null && echo apk"
+        "p=$(pidof mobaxd) && kill -9 $p && echo jar; pidof {PKG} >/dev/null && echo apk"
     ));
     if out.trim().is_empty() { return Ok(()); }
     if out.contains("apk") {
-        let _ = adb(Some(serial), &["shell", &format!("am force-stop {PKG}; pkill -f '[i]nstrument.*{PKG}'")]);
+        // `am instrument -w` ends with its instrumentation.
+        let _ = adb(Some(serial), &["shell", &format!("am force-stop {PKG}")]);
     }
     let deadline = Instant::now() + Duration::from_secs(3);
     while Instant::now() < deadline {
-        if device_sh(serial, &format!("pidof {PKG}; pgrep -f '[m]obaxd'")).trim().is_empty() { break; }
+        if device_sh(serial, &format!("pidof {PKG} mobaxd")).trim().is_empty() { break; }
         thread::sleep(Duration::from_millis(100));
     }
     thread::sleep(Duration::from_millis(200));
@@ -640,7 +643,7 @@ pub(crate) fn devices() -> io::Result<Vec<DeviceRow>> {
                 // round-trips vs the original four separate `adb shell`s.
                 let cmd = format!(
                     "test -f {DEVICE_JAR} -o -f {DEVICE_FP} && echo jar=1 || echo jar=0; \
-                     {{ pgrep -f '[m]obaxd' || pidof {PKG}; }} >/dev/null && echo run=1 || echo run=0; \
+                     pidof mobaxd {PKG} >/dev/null && echo run=1 || echo run=0; \
                      echo sdk=$(getprop ro.build.version.sdk); \
                      echo model=$(getprop ro.product.model)"
                 );

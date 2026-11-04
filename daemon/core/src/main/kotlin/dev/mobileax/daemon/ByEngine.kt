@@ -168,11 +168,50 @@ internal class ByEngine(private val ua: UiAutomation, private val ctx: Context, 
         val finger = direction(opts["dir"])
         val content = Direction.reverse(finger)
         val pct = opts["pct"]?.toFloatOrNull() ?: 0.8f
+        val speed = opts["speed"]?.toIntOrNull()
         return when {
             opts["fling"] == "1" -> ok(if (o.fling(content)) "ok fling" else "ok fling end")
-            o.isScrollable -> ok(if (o.scroll(content, pct)) "ok scroll" else "ok scroll end")
-            else -> { o.swipe(finger, pct); ok("ok swipe") }
+            o.isScrollable -> {
+                // The list's own scroll action pages at once and says when it
+                // can't go on. Else a swipe, without UiObject2.scroll's wait
+                // for the scroll events to stop (~1.5 s): settling is the
+                // caller's job.
+                val more = scrollAction(o, content) ?: swipeMoved(q, o, finger, pct, speed)
+                ok(if (more) "ok scroll" else "ok scroll end")
+            }
+            else -> { speed?.let { o.swipe(finger, pct, it) } ?: o.swipe(finger, pct); ok("ok swipe") }
         }
+    }
+
+    /** Swipes inside [o]; whether its first rows moved (false: the end). */
+    private fun swipeMoved(q: Query, o: UiObject2, finger: Direction, pct: Float, speed: Int?): Boolean {
+        val before = rows(o)
+        if (speed != null) o.swipe(finger, pct, speed) else o.swipe(finger, pct)
+        val after = device.findObject(q.node)?.let { rows(it) } ?: return true
+        return after != before
+    }
+
+    /** Where its first few children are and what they say. */
+    private fun rows(o: UiObject2): String = try {
+        o.children.take(4).joinToString("|") { c -> c.visibleBounds.toShortString() + (labelOf(c) ?: "") }
+    } catch (_: Throwable) { "" }
+
+    /** ACTION_SCROLL_DOWN/UP/LEFT/RIGHT (or, vertically, FORWARD/BACKWARD) when the
+     *  node offers it: whether it moved; null when it offers neither. */
+    private fun scrollAction(o: UiObject2, content: Direction): Boolean? {
+        val n = try { o.accessibilityNodeInfo } catch (_: Throwable) { return null }
+        val directional = when (content) {
+            Direction.DOWN -> AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_DOWN
+            Direction.UP -> AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_UP
+            Direction.LEFT -> AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_LEFT
+            Direction.RIGHT -> AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_RIGHT
+        }
+        val offered = n.actionList
+        if (offered.any { it.id == directional.id }) return n.performAction(directional.id)
+        val vertical = content == Direction.DOWN || content == Direction.UP
+        val step = if (content == Direction.DOWN) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+        if (vertical && offered.any { it.id == step }) return n.performAction(step)
+        return null
     }
 
     private fun pinch(q: Query, opts: Map<String, String>, cmd: String): ByteArray {
