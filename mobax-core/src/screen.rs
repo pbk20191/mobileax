@@ -86,6 +86,11 @@ impl Screen {
         pkg.is_empty() && ui_dump::interactive_rows(&json::app_roots(dump)).is_empty()
     }
 
+    /// Package of the topmost app window in `dump` ("" for a starting window).
+    pub fn top_pkg(dump: &Value) -> String {
+        identity(dump).1
+    }
+
     /// An app window reaches past the screen's edge: it is sliding in or out
     /// (an activity transition), and its rows' coordinates are where they
     /// were mid-slide. The screen's width is the widest window at x=0 (the
