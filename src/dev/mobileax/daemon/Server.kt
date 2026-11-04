@@ -28,6 +28,7 @@ internal class Server(private val h: Handlers) {
         lateinit var state: State
         lateinit var uiEvents: UiEvents
         lateinit var nodes: NodeActions
+        lateinit var toasts: Toasts
     }
 
     fun handlers(): Handlers {
@@ -62,6 +63,7 @@ internal class Server(private val h: Handlers) {
             "node_set_text" -> return runNodeSetText(cmd)
             "node_scroll" -> return runNodeScroll(cmd)
             "scroll_forward" -> return h.nodes.scrollForward()
+            "toasts" -> return h.toasts.since(cmd)
             "node_focus" -> return runNodeFocus(cmd)
             "submit" -> return runSubmit(cmd)
             "paste" -> return runPaste(cmd)

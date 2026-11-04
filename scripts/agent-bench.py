@@ -121,6 +121,9 @@ def run_scenario(client, scenario, adb=None):
     steps = []
     for s in scenario.get("steps", []) + [scenario["check"]]:
         text, err, ms = client.call(s["tool"], s.get("args", {}))
+        # `expect`: the reply must say this (a toast, a result only the reply shows).
+        if not err and "expect" in s and s["expect"] not in text:
+            err, text = True, f"expected {s['expect']!r} in the reply: {text}"
         steps.append({"tool": s["tool"], "args": s.get("args", {}), "tokens": approx_tokens(text), "chars": len(text),
                       "ms": round(ms, 1), "error": text[:200] if err else None,
                       "reply": text[:160]})

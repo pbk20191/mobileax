@@ -112,6 +112,7 @@ data object Main {
         h.wm = Wm(context.getSystemService(DisplayManager::class.java))
         h.uiEvents = UiEvents(ua)
         h.nodes = NodeActions(ua)
+        h.toasts = Toasts(h.uiEvents)
         h.byStudy = ByStudy(ua, context)
         h.state = State(context, h.uiEvents)
 

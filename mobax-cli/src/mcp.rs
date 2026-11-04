@@ -394,6 +394,12 @@ impl Engine {
                     r.keep = false;
                 }
             }
+            // Toasts leave no rows: report the ones this action raised.
+            if let (true, Some(since)) = (r.keep, seq) {
+                if let Ok(body) = sess.conn.call(&format!("toasts since={since}")) {
+                    r.text.push_str(&toast_lines(&String::from_utf8_lossy(&body)));
+                }
+            }
         }
         if r.keep {
             self.checkin(&t, sess);
@@ -826,6 +832,15 @@ fn started_pkg(text: &str) -> Option<String> {
     let rest = text.split_once("started=")?.1;
     let pkg = rest.split(|c: char| c == '/' || c.is_whitespace()).next()?;
     (!pkg.is_empty()).then(|| pkg.to_string())
+}
+
+/// `toasts` reply → a `toast: …` line per toast (none for an error: an
+/// older daemon doesn't keep them).
+fn toast_lines(reply: &str) -> String {
+    if reply.starts_with("ERR:") {
+        return String::new();
+    }
+    reply.lines().filter(|l| !l.trim().is_empty()).map(|l| format!("\ntoast: {l}")).collect()
 }
 
 /// The daemon's event counter, to settle against after an action.
@@ -1803,6 +1818,14 @@ mod tests {
         // Still moving at the cap: look once more anyway.
         assert!(moved_then_settled("ERR:TIMEOUT:settle:idle_ms=300 timeout_ms=4000"));
         assert!(!moved_then_settled("ERR:DEVICE_GONE:x"));
+    }
+
+    #[test]
+    fn toasts_after_an_action_become_one_line_each() {
+        assert_eq!(toast_lines("저장됨\n2단계 남음"), "\ntoast: 저장됨\ntoast: 2단계 남음");
+        assert_eq!(toast_lines(""), "");
+        // An older daemon without `toasts`: nothing to add.
+        assert_eq!(toast_lines("ERR:UNKNOWN_CMD:toasts"), "");
     }
 
     #[test]

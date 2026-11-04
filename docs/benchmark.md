@@ -66,6 +66,8 @@ a check). No LLM runs, so it is free and repeatable. Spec:
 - **Approximate tokens** = ASCII chars / 4 (rounded up) + one per non-ASCII
   char. A fixed yardstick for comparing runs, not a tokenizer; changing it
   means re-recording the baseline.
+- A step may name `expect`: text its reply must contain (a toast, a
+  result only the reply shows); without it the step fails.
 - `setup` steps are not counted. They may call host adb (`{"adb": [...]}`),
   since MCP has no device shell.
 - Tokens and time are medians over runs. Action replies report what changed
@@ -109,6 +111,7 @@ within ±5% on the total (+3.6%, +2.7%) with identical calls:
 | s3 | Settings search "배터리" → result | typing, result check |
 | s4 | Fresh camera: location-tag prompt, location permission (no `wait`: a missed tap looks again while the screen moves) | popups (later: auto-handling) |
 | s5 | Recents (two fixed cards), one `ui` | output size of a full-screen system UI |
+| s6 | About phone → tap Build number; the check is the reply carrying `toast:` | a result shown only as a toast |
 
 Findings from writing the scenarios:
 
@@ -129,3 +132,4 @@ Findings from writing the scenarios:
 | `tap`/`find` `scroll: true` (pages the biggest list with ACTION_SCROLL_FORWARD until the target shows); s2 now uses it | s2 8 → 4 | s2 1847 → 673 (−64%) | tools/list 1466 → 1513 (+47 for the argument) |
 | A missed `tap` looks again while the screen is moving (400 ms with no events = still, fail at once; at most 4 s); s2 and s4 drop their `wait` steps; s1 setup also closes Settings search | s2 4 → 3, s4 5 → 4 | s4 526 → 339; every scenario 0% run-to-run spread | ±0 |
 | **All of the above vs the baseline** | **24 → 18** | **4581 → 3211 (−30%)** | **2979 → 1867 (−37%)** |
+| Toasts: action replies end with `toast: …` for each toast the action raised (daemon wire `toasts since=SEQ`); new s6 | s6: 2 | s6: 338 | ±0 |
