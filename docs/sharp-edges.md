@@ -24,9 +24,14 @@
     code and pid are files in the app's external `files/shell/` directory
     and `executeShellCommand` runs `sh <file>`. `-e shell file` on
     `am instrument` forces the file path.
-  - The SurfaceControl mirror (SDK 29–33) and, on SDK 29, the DisplayManager
-    mirror are refused to an app uid: `see` falls back to UiAutomation
-    screenshots and the live streams don't start.
+- Screenshots without a mirror (no CAPTURE_VIDEO_OUTPUT and no SurfaceControl
+  display): `see` and element screenshots ask SurfaceFlinger for one frame at
+  the size sent (`DisplayCapture`: `IWindowManager.captureDisplay` on 34+,
+  `SurfaceControl.captureDisplay` on 31–33, `SurfaceControl.screenshot` on
+  29–30), which needs only READ_FRAME_BUFFER; then UiAutomation.takeScreenshot.
+  The 29–30 call can't turn the frame, so a turned screen there goes to
+  UiAutomation. `setprop debug.mobax.mirror 0` before `mobax use` skips the
+  mirror to try this path.
 - `BroadcastReceiver` registrations from our Context aren't routed —
   `appCounts` cache TTL'd at 4.5 s instead.
 - Most binder lookups go via reflection so the jar compiles against the

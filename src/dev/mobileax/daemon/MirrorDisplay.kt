@@ -54,6 +54,7 @@ internal class MirrorDisplay private constructor(
             } catch (e: SecurityException) {
                 // Only the missing CAPTURE_VIDEO_OUTPUT below 14 has a way round.
                 if (Build.VERSION.SDK_INT >= 34) throw e
+                Logx.i("mirror: virtual display refused (${e.message}); through SurfaceControl")
             }
             val src = currentSize(dm)
             val token = SurfaceDisplay.create(name, surface, Rect(0, 0, src.x, src.y), Rect(0, 0, outW, outH))

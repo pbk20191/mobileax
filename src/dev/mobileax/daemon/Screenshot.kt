@@ -20,6 +20,7 @@ import java.nio.charset.StandardCharsets
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.concurrent.Volatile
 import kotlin.math.max
+import kotlin.math.min
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -77,11 +78,18 @@ internal class Screenshot(private val ua: UiAutomation) {
         this.displayManager = dm
     }
 
-    /** Creates the default 768 px mirror; call once after construction. */
+    /** Creates the default 768 px mirror; call once after construction.
+     *  `setprop debug.mobax.mirror 0` before the daemon starts skips it, to
+     *  exercise the no-mirror path on a device that has one. */
     suspend fun probeMirror() {
         val dm = displayManager
         var ok = false
-        if (dm != null) {
+        val off = try {
+            Class.forName("android.os.SystemProperties").getMethod("get", String::class.java)
+                .invoke(null, "debug.mobax.mirror") == "0"
+        } catch (_: Throwable) { false }
+        if (off) Logx.boot("screenshot: mirror off (debug.mobax.mirror=0)")
+        if (dm != null && !off) {
             try {
                 val m: Mirror = Mirror.create(dm, sourceSize, 768)
                 mirrorsMutex.withLock { mirrors.put(768, m) }
@@ -133,10 +141,18 @@ internal class Screenshot(private val ua: UiAutomation) {
         val fit = if (args.longEdge > 0) args.longEdge else 768
         val quality = clampQuality(args.quality)
         return try {
+            val screen = currentScreen()
             if (mirrorAvailable) {
-                val screen = displayManager?.let { MirrorDisplay.currentSize(it) }?.takeIf { it.x > 0 } ?: sourceSize
                 mirrorAt(max(sourceSize.x, sourceSize.y)).encodeRegion(rect, screen.x, screen.y, fit, args.format, quality)
             } else withContext(Loop.Work) {
+                // Only the element, composited at the size it is sent at.
+                val r = android.graphics.Rect(rect)
+                if (r.intersect(0, 0, screen.x, screen.y)) {
+                    val s = min(1f, fit.toFloat() / max(r.width(), r.height()))
+                    DisplayCapture.capture(s, r, screen.x, screen.y, currentRotation())?.let { b ->
+                        try { return@withContext encode(b, args.format, quality) } finally { b.recycle() }
+                    }
+                }
                 val full = ua.takeScreenshot() ?: return@withContext "ERR:screenshot-null".toByteArray()
                 try { encodeRegion(full, full.width, full.height, rect, full.width, full.height, fit, args.format, quality) }
                 finally { full.recycle() }
@@ -160,7 +176,21 @@ internal class Screenshot(private val ua: UiAutomation) {
         mirrors[longEdge] ?: Mirror.create(dm, sourceSize, longEdge).also { mirrors[longEdge] = it }
     }
 
+    private fun currentRotation(): Int = displayManager?.let { MirrorDisplay.currentRotation(it) } ?: 0
+
+    /** The screen's current size (it follows rotation; [sourceSize] doesn't). */
+    private fun currentScreen(): Point =
+        displayManager?.let { MirrorDisplay.currentSize(it) }?.takeIf { it.x > 0 } ?: sourceSize
+
+    /** No mirror: a frame composited at [longEdge] ([DisplayCapture]), else UiAutomation's full screen scaled down. */
     private fun fallbackCapture(longEdge: Int, quality: Int, format: String?): ByteArray {
+        val screen = currentScreen()
+        val s = min(1f, longEdge.toFloat() / max(screen.x, screen.y))
+        DisplayCapture.capture(s, null, screen.x, screen.y, currentRotation())?.let { b ->
+            try { return encode(b, format, quality) } catch (t: Throwable) {
+                return ("ERR:screenshot-failed:" + t.javaClass.simpleName + ":" + t.message).toByteArray()
+            } finally { b.recycle() }
+        }
         var full: Bitmap? = null
         var scaled: Bitmap? = null
         try {
