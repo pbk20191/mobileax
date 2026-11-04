@@ -130,12 +130,10 @@ internal class Dispatch(
             val args = Server.parseScreenshotArgs(cmd)
             if (args.longEdge == 0 && !args.max) args.max = true
             when (head) {
-                "stream" -> {
-                    val mirror = h.shot.mirrorFor(args)
+                "stream" -> h.shot.withMirror(args) { mirror ->
                     Streams.jpeg(c, mirror, Server.clampQuality(args.quality), args.fps)
                 }
-                "stream_tilejpeg" -> {
-                    val mirror = h.shot.mirrorFor(args)
+                "stream_tilejpeg" -> h.shot.withMirror(args) { mirror ->
                     Streams.tiles(c, mirror, Server.clampQuality(args.quality), if (args.tile > 0) args.tile else 128)
                 }
                 else -> {

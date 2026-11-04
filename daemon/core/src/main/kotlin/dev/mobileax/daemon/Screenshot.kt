@@ -12,6 +12,7 @@ import android.hardware.display.DisplayManager
 import android.media.Image
 import android.media.ImageReader
 import android.os.Build
+import android.os.SystemClock
 import android.view.Display
 import dev.mobileax.daemon.Loop.mainHandler
 import java.io.BufferedReader
@@ -22,6 +23,7 @@ import kotlin.concurrent.Volatile
 import kotlin.math.max
 import kotlin.math.min
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -46,6 +48,19 @@ internal class Screenshot(private val ua: UiAutomation) {
     private val displayManager: DisplayManager? // null if framework init failed
     private var mirrorAvailable = false
     private val mirrorsMutex = Mutex()
+
+    /*
+     * Mirrors are made on demand and dropped when idle. A mirror recomposites
+     * every frame the screen changes (measured on SDK 36 while scrolling:
+     * surfaceflinger ~2x, the emulator ~15% more CPU), and an agent takes a
+     * screenshot every few seconds at most, which DisplayCapture serves in
+     * ~20-40 ms more. So: streams make one; screenshots use one that is
+     * already up, or make one when they come in a burst; one unused for
+     * IDLE_MS (and not held by a stream) is closed. Guarded by mirrorsMutex.
+     */
+    private val lastUse = HashMap<Int, Long>()
+    private val held = HashMap<Int, Int>()
+    private val recentShots = ArrayDeque<Long>()
 
     // Insertion-ordered cache keyed by long-edge resolution.
     // First call for a size pays ~50 ms; subsequent calls are warm.
@@ -91,15 +106,75 @@ internal class Screenshot(private val ua: UiAutomation) {
         if (off) Logx.boot("screenshot: mirror off (debug.mobax.mirror=0)")
         if (dm != null && !off) {
             try {
+                // Only whether one can be made: it is made again when wanted.
                 val m: Mirror = Mirror.create(dm, sourceSize, 768)
-                mirrorsMutex.withLock { mirrors.put(768, m) }
                 ok = true
-                Logx.i("screenshot: mirror ${m.outW}x${m.outH} of display ${sourceSize.x}x${sourceSize.y}")
+                Logx.i("screenshot: mirror ${m.outW}x${m.outH} of display ${sourceSize.x}x${sourceSize.y} works; made on demand")
+                m.close()
             } catch (t: Throwable) {
                 Logx.bootWarn("screenshot: mirror probe failed", t)
             }
         }
         this.mirrorAvailable = ok
+        // The first DisplayCapture call pays for reflection and the binder (~100-500 ms).
+        withContext(Loop.Work) {
+            val s = currentScreen()
+            DisplayCapture.capture(0.05f, null, s.x, s.y, currentRotation())?.recycle()
+        }
+        Loop.scope.launch { closeIdleMirrors() }
+    }
+
+    /** Closes mirrors no stream holds and no screenshot used for IDLE_MS. */
+    private suspend fun closeIdleMirrors() {
+        while (true) {
+            delay(IDLE_MS / 3)
+            val now = SystemClock.uptimeMillis()
+            val idle = mirrorsMutex.withLock {
+                mirrors.keys.filterNotNull()
+                    .filter { (held[it] ?: 0) == 0 && now - (lastUse[it] ?: 0) >= IDLE_MS }
+                    .mapNotNull { k -> lastUse.remove(k); mirrors.remove(k) }
+            }
+            for (m in idle) {
+                Logx.i("screenshot: closing idle mirror ${m.outW}x${m.outH}")
+                m.close()
+            }
+        }
+    }
+
+    /** A screenshot now: true when it is one of a burst (BURST within BURST_MS), worth a mirror. */
+    private fun burst(): Boolean {
+        val now = SystemClock.uptimeMillis()
+        synchronized(recentShots) {
+            recentShots.addLast(now)
+            while (recentShots.isNotEmpty() && now - recentShots.first() > BURST_MS) recentShots.removeFirst()
+            return recentShots.size >= BURST
+        }
+    }
+
+    /** The mirror at [longEdge] if one is up, else (in a burst) a new one, else null. */
+    private suspend fun mirrorIfWorth(longEdge: Int): Mirror? {
+        val inBurst = burst()
+        if (!mirrorAvailable) return null
+        val up = mirrorsMutex.withLock { mirrors.containsKey(longEdge) }
+        return if (up || inBurst) mirrorAt(longEdge) else null
+    }
+
+    /** Runs [block] (a stream) on the mirror for [args], which stays up meanwhile. */
+    suspend fun <T> withMirror(args: CaptureArgs, block: suspend (Mirror) -> T): T {
+        check(mirrorAvailable) { "mirror unavailable" }
+        val edge = resolveLongEdge(args)
+        val m = mirrorAt(edge)
+        mirrorsMutex.withLock { held[edge] = (held[edge] ?: 0) + 1 }
+        try {
+            return block(m)
+        } finally {
+            withContext(NonCancellable) {
+                mirrorsMutex.withLock {
+                    held[edge] = (held[edge] ?: 1) - 1
+                    lastUse[edge] = SystemClock.uptimeMillis()
+                }
+            }
+        }
     }
 
     suspend fun capture(args: CaptureArgs): ByteArray {
@@ -109,9 +184,12 @@ internal class Screenshot(private val ua: UiAutomation) {
         val png: Boolean = isPng(args.format)
 
         var result: ByteArray
-        if (mirrorAvailable) {
+        val mirror = try { mirrorIfWorth(longEdge) } catch (t: Throwable) {
+            Logx.w("screenshot: mirror failed, falling back", t); null
+        }
+        if (mirror != null) {
             try {
-                result = mirrorCapture(longEdge, quality, args.format)
+                result = mirror.encodeLatest(args.format, quality)
             } catch (t: Throwable) {
                 Logx.w("screenshot: mirror capture failed, falling back", t)
                 result = withContext(Loop.Work) { fallbackCapture(longEdge, quality, args.format) }
@@ -142,8 +220,9 @@ internal class Screenshot(private val ua: UiAutomation) {
         val quality = clampQuality(args.quality)
         return try {
             val screen = currentScreen()
-            if (mirrorAvailable) {
-                mirrorAt(max(sourceSize.x, sourceSize.y)).encodeRegion(rect, screen.x, screen.y, fit, args.format, quality)
+            val mirror = mirrorIfWorth(max(sourceSize.x, sourceSize.y))
+            if (mirror != null) {
+                mirror.encodeRegion(rect, screen.x, screen.y, fit, args.format, quality)
             } else withContext(Loop.Work) {
                 // Only the element, composited at the size it is sent at.
                 val r = android.graphics.Rect(rect)
@@ -162,10 +241,8 @@ internal class Screenshot(private val ua: UiAutomation) {
         }
     }
 
-    private suspend fun mirrorCapture(longEdge: Int, quality: Int, format: String?): ByteArray =
-        mirrorAt(longEdge).encodeLatest(format, quality)
-
     private suspend fun mirrorAt(longEdge: Int): Mirror = mirrorsMutex.withLock {
+        lastUse[longEdge] = SystemClock.uptimeMillis()
         val dm = displayManager!!
         val have = mirrors[longEdge]
         // A SurfaceControl mirror is fixed to the orientation it was made in.
@@ -244,16 +321,6 @@ internal class Screenshot(private val ua: UiAutomation) {
      * landed in `cached`. Implementations MUST be non-blocking.  */
     fun interface FrameListener {
         fun onFrame()
-    }
-
-    /**
-     * Returns the (possibly-newly-created) mirror for the resolution implied
-     * by `args`. Used by the stream command to subscribe to frame events
-     * on the same cached mirror the per-call screenshot path uses.
-     */
-    suspend fun mirrorFor(args: CaptureArgs): Mirror {
-        check(mirrorAvailable) { "mirror unavailable" }
-        return mirrorAt(resolveLongEdge(args))
     }
 
     // ---- mirror pipeline ----
@@ -560,6 +627,11 @@ internal class Screenshot(private val ua: UiAutomation) {
         private const val JPEG_DEFAULT_Q = 80
 
         private const val MAX_CACHED_MIRRORS = 4
+        /** A mirror unused this long, and held by no stream, is closed. */
+        private const val IDLE_MS = 30_000L
+        /** BURST screenshots within BURST_MS make a mirror worth its upkeep. */
+        private const val BURST = 3
+        private const val BURST_MS = 5_000L
 
         /** Bitmap.wrapHardwareBuffer and ImageReader usage flags need API 29. */
         private val USE_HARDWARE_BUFFER = Build.VERSION.SDK_INT >= 29

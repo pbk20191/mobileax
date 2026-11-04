@@ -24,6 +24,12 @@
     code and pid are files in the app's external `files/shell/` directory
     and `executeShellCommand` runs `sh <file>`. `-e shell file` on
     `am instrument` forces the file path.
+- The screenshot mirror is made on demand, not kept up: a mirror
+  recomposites every frame the screen changes (SDK 36 while scrolling:
+  surfaceflinger about twice the CPU, the emulator ~15% more). Streams make
+  one and hold it; screenshots use one that is up, or make one when three
+  come within 5 s; one unused for 30 s is closed. Single screenshots go
+  through DisplayCapture below (~20-40 ms more than a warm mirror).
 - Screenshots without a mirror (no CAPTURE_VIDEO_OUTPUT and no SurfaceControl
   display): `see` and element screenshots ask SurfaceFlinger for one frame at
   the size sent (`DisplayCapture`: `IWindowManager.captureDisplay` on 34+,
