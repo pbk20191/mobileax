@@ -1255,11 +1255,11 @@ fn call_tool(name: &str, args: &Value, engine: &Engine, device: Option<&str>, br
         })
     });
     let (ok, text) = match via {
-        Via::Run | Via::Act if !engine.in_process() => child(engine, device, &argv),
+        Via::Run | Via::Act if !engine.in_process() => child(engine, device.clone(), &argv),
         Via::Run => engine.run(dev, &argv),
         Via::Act => engine.act(dev, &argv, observe, brief),
         Via::Child => {
-            let r = child(engine, device, &argv);
+            let r = child(engine, device.clone(), &argv);
             if matches!(name, "use" | "drop") {
                 engine.forget();
             }
@@ -1271,7 +1271,32 @@ fn call_tool(name: &str, args: &Value, engine: &Engine, device: Option<&str>, br
         Some(Scrolled { times, found: true }) => format!("scrolled {times}×\n{text}"),
         Some(Scrolled { times, found: false }) => format!("{text}\n(scrolled {times}× to the end of the list)"),
     };
+    // A bare word is a class name in selector syntax; if it missed but a node
+    // shows it as text, say how to name that node (nothing is retried).
+    let word = match name {
+        "tap" | "wait" => s("target"),
+        "find" => s("selector"),
+        _ => None,
+    };
+    let missed = text.contains("NOT_FOUND") || text.contains("expected class name") || (name == "wait" && text.contains("TIMEOUT"));
+    let text = match word {
+        Some(w) if !ok && missed && bare_word(&w) => {
+            let look = ["find".to_string(), format!(":has-text({w:?})")];
+            let shown = if engine.in_process() { engine.run(dev, &look).0 } else { child(engine, device.clone(), &look).0 };
+            if shown { format!("{text}\n{}", class_word_hint(&w)) } else { text }
+        }
+        _ => text,
+    };
     Ok(Out::Text((ok, text)))
+}
+
+/// A target with no selector syntax: one word, read as a class name.
+fn bare_word(t: &str) -> bool {
+    !t.is_empty() && !t.chars().any(|c| c.is_whitespace() || "@#.:[]()\"'=*>~+,".contains(c))
+}
+
+fn class_word_hint(w: &str) -> String {
+    format!("No class \"{w}\", but a node shows that text: target it with :has-text({w:?}).")
 }
 
 /// Most pages `scroll: true` turns before giving up.
@@ -1709,6 +1734,22 @@ mod tests {
     fn tap_and_find_take_scroll() {
         let has = |name: &str| super::tools().iter().find(|t| t.name == name).unwrap().schema.contains(r#""scroll""#);
         assert!(has("tap") && has("find"));
+    }
+
+    #[test]
+    fn a_bare_word_is_one_with_no_selector_syntax() {
+        for w in ["다음", "Gmail", "OK"] {
+            assert!(bare_word(w), "{w}");
+        }
+        for w in ["@3", "#shutter_button", "Button[text=OK]", ":has-text(\"x\")", "two words", "a.b", ""] {
+            assert!(!bare_word(w), "{w}");
+        }
+    }
+
+    #[test]
+    fn a_missed_bare_word_that_is_on_screen_as_text_gets_a_hint() {
+        let h = class_word_hint("다음");
+        assert!(h.contains(r#":has-text("다음")"#) && h.contains("class"), "{h}");
     }
 
     #[test]
