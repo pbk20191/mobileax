@@ -1,0 +1,6 @@
+{"name": "s1-settings-item",
+ "note": "Settings home -> Display & touch; Medium_Phone SDK 36, ko-KR.",
+ "setup": [{"tool": "close", "args": {"package": "com.android.settings"}}, {"tool": "go", "args": {"key": "home"}}],
+ "steps": [{"tool": "open", "args": {"app": "com.android.settings"}},
+           {"tool": "tap", "args": {"target": "디스플레이 및 터치"}}],
+ "check": {"tool": "find", "args": {"selector": ":has-text(\"어두운 테마\")"}}}

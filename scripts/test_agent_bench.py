@@ -43,6 +43,14 @@ class AgentBenchTest(unittest.TestCase):
         self.assertEqual(r["calls"], 1)
         self.assertEqual(r["tokens"], ab.approx_tokens("hit"))
 
+    def test_adb_setup_steps_run_on_the_host_and_are_not_counted(self):
+        ran = []
+        fake = FakeClient({"find": ("hit", False)})
+        r = ab.run_scenario(fake, {"name": "x", "setup": [{"adb": ["shell", "pm", "clear", "p"]}], "steps": [],
+                                   "check": {"tool": "find", "args": {}}}, adb=ran.append)
+        self.assertEqual(ran, [["shell", "pm", "clear", "p"]])
+        self.assertEqual(r["calls"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,5 @@
+{"name": "s5-heavy-screen",
+ "note": "One look at the Recents screen: output size of a heavy screen.",
+ "setup": [{"tool": "open", "args": {"app": "com.android.settings"}}, {"tool": "go", "args": {"key": "home"}}],
+ "steps": [{"tool": "go", "args": {"key": "recents"}}],
+ "check": {"tool": "ui", "args": {}}}

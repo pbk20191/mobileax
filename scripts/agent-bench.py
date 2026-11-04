@@ -94,13 +94,27 @@ class McpClient:
             self.p.kill()
 
 
-def run_scenario(client, scenario):
+def adb_runner(device=None):
+    """Runs `adb ARGS…` on the host (setup only: MCP has no device shell)."""
+    sdk = os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT")
+    exe = os.path.join(sdk, "platform-tools", "adb") if sdk else "adb"
+    pre = [exe] + (["-s", device] if device else [])
+
+    def run(args):
+        subprocess.run(pre + args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=TIMEOUT_S)
+    return run
+
+
+def run_scenario(client, scenario, adb=None):
     for s in scenario.get("setup", []):
-        client.call(s["tool"], s.get("args", {}))
+        if "adb" in s:
+            adb(s["adb"])
+        else:
+            client.call(s["tool"], s.get("args", {}))
     steps = []
     for s in scenario.get("steps", []) + [scenario["check"]]:
         text, err, ms = client.call(s["tool"], s.get("args", {}))
-        steps.append({"tool": s["tool"], "tokens": approx_tokens(text), "chars": len(text),
+        steps.append({"tool": s["tool"], "args": s.get("args", {}), "tokens": approx_tokens(text), "chars": len(text),
                       "ms": round(ms, 1), "error": text[:200] if err else None})
     return {"name": scenario["name"], "ok": all(s["error"] is None for s in steps), "calls": len(steps),
             "tokens": sum(s["tokens"] for s in steps), "chars": sum(s["chars"] for s in steps),
@@ -128,6 +142,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--mobax", default=default_mobax())
     ap.add_argument("--device")
+    ap.add_argument("--adb", help="adb for setup steps (default: $ANDROID_HOME/platform-tools/adb, else PATH)")
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--out")
     ap.add_argument("--compare")
@@ -141,7 +156,10 @@ def main():
     client = McpClient(a.mobax, a.device)
     try:
         tools = approx_tokens(client.tools_list_text())
-        rows = [summarize([run_scenario(client, s) for _ in range(a.runs)]) for s in scenarios]
+        adb = (lambda args: subprocess.run([a.adb] + (["-s", a.device] if a.device else []) + args,
+                                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                            timeout=TIMEOUT_S)) if a.adb else adb_runner(a.device)
+        rows = [summarize([run_scenario(client, s, adb) for _ in range(a.runs)]) for s in scenarios]
     finally:
         client.close()
 
@@ -165,7 +183,7 @@ def main():
     for r in rows:
         if not r["ok"]:
             bad = next(s for run in r["runs"] for s in run["steps"] if s["error"])
-            print(f"FAILED {r['name']}: {bad['tool']}: {bad['error']}", file=sys.stderr)
+            print(f"FAILED {r['name']}: {bad['tool']} {json.dumps(bad['args'], ensure_ascii=False)}: {bad['error']}", file=sys.stderr)
 
     if a.out:
         with open(a.out, "w", encoding="utf-8") as f:
