@@ -397,6 +397,11 @@ internal class Server(private val h: Handlers) {
                 try {
                     when (k) {
                         "size" -> a.longEdge = v.toInt()
+                        "rect" -> {
+                            val n = v.split(',').map { it.trim().toInt() }
+                            require(n.size == 4) { "rect=l,t,r,b" }
+                            a.rect = android.graphics.Rect(n[0], n[1], n[2], n[3])
+                        }
                         "q", "quality" -> a.quality = v.toInt()
                         "fmt", "format" -> a.format = v
                         "max" -> a.max = "0" != v && !"false".equals(v, ignoreCase = true)

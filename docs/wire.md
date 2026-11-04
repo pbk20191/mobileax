@@ -30,7 +30,7 @@ dump_active                                           active window only
 open and push continuously.
 
 ```
-screenshot       [size=N] [q=N] [fmt=jpeg|webp|png] [max=1] [secure_check=1]
+screenshot       [size=N] [q=N] [fmt=jpeg|webp|png] [max=1] [secure_check=1] [rect=L,T,R,B]
 stream           [size=N] [q=N] [fps=N]                  JPEG, native by default
 stream_h264      [size=N] [max=1] [fps=N] [bitrate=KBPS] [gop=SEC]
 stream_tilejpeg  [size=N] [q=N] [tile=N]

@@ -33,6 +33,8 @@ pub struct Ref {
     pub line: String,
     pub x: i64,
     pub y: i64,
+    /// The node's screen rectangle (left, top, right, bottom).
+    pub bounds: Option<(i64, i64, i64, i64)>,
     /// Daemon-grammar selector for the node.
     pub sel: String,
 }
@@ -72,7 +74,7 @@ impl Screen {
                     next - 1
                 }
             };
-            out.push(Ref { n, ident, line: r.line, x: r.x, y: r.y, sel: r.sel });
+            out.push(Ref { n, ident, line: r.line, x: r.x, y: r.y, bounds: r.bounds, sel: r.sel });
         }
         let keyboard = json::obj_get(dump, "windows").and_then(json::as_arr).unwrap_or(&[]).iter()
             .any(|w| json::obj_get(w, "type").and_then(json::as_num) == Some(TYPE_INPUT_METHOD));

@@ -138,3 +138,4 @@ Findings from writing the scenarios:
 | A missed `tap` looks again while the screen is moving (400 ms with no events = still, fail at once; at most 4 s); s2 and s4 drop their `wait` steps; s1 setup also closes Settings search | s2 4 → 3, s4 5 → 4 | s4 526 → 339; every scenario 0% run-to-run spread | ±0 |
 | **All of the above vs the baseline** | **24 → 18** | **4581 → 3211 (−30%)** | **2979 → 1867 (−37%)** |
 | Toasts: action replies end with `toast: …` for each toast the action raised (daemon wire `toasts since=SEQ`); new s6 | s6: 2 | s6: 338 | ±0 |
+| `screenshot` `target` (@N, text, selector): just that element, cut from a full-resolution frame | ±0 | a Settings row: 418×78 (~43 image tokens at w·h/750) vs the 346×768 screen (~354) | +17 |

@@ -666,7 +666,7 @@ impl Engine {
     /// The x,y and selector of row `@n`, checked against the screen as it
     /// is now: a ref from a screen that has since gone is refused (with the
     /// new screen), so a late transition can't send a tap to the wrong row.
-    fn row(&self, device: Option<&str>, n: u32) -> Result<(i64, i64, String), String> {
+    fn row(&self, device: Option<&str>, n: u32) -> Result<(i64, i64, String, Option<Bounds>), String> {
         let t = self.target(device)?;
         let mut sess = self.checkout(&t)?;
         let dump = sess.conn.call("dump").and_then(|b| parse_dump(&b)).map_err(|e| format!("ERR:DAEMON_ERROR:{e}"))?;
@@ -678,7 +678,7 @@ impl Engine {
         let had = prev.get(n).is_some();
         let now = Screen::from_dump(&dump, Some(prev));
         let same_screen = matches!(now.change_from(Some(prev)), Change::Same | Change::Rows(_));
-        let found = now.get(n).map(|r| (r.x, r.y, r.sel.clone()));
+        let found = now.get(n).map(|r| (r.x, r.y, r.sel.clone(), r.bounds));
         let reply = format!("{} · {} rows\n{}", now.title(), now.len(), now.table().trim_end());
         screens.insert(t, now);
         match found {
@@ -689,10 +689,13 @@ impl Engine {
         }
     }
 
-    fn screenshot(&self, device: Option<&str>, size: Option<i64>, native: bool) -> Result<Vec<u8>, String> {
+    fn screenshot(&self, device: Option<&str>, size: Option<i64>, native: bool, rect: Option<Bounds>) -> Result<Vec<u8>, String> {
         let t = self.target(device)?;
         let mut sess = self.checkout(&t)?;
-        let wire = if native { "screenshot max=1".to_string() } else { format!("screenshot size={}", size.unwrap_or(768)) };
+        let mut wire = if native { "screenshot max=1".to_string() } else { format!("screenshot size={}", size.unwrap_or(768)) };
+        if let Some((l, t, r, b)) = rect {
+            wire.push_str(&format!(" rect={l},{t},{r},{b}"));
+        }
         let bytes = sess.conn.call(&wire).map_err(|e| format!("ERR:DAEMON_ERROR:{e}"))?;
         self.checkin(&t, sess);
         if bytes.starts_with(b"ERR:") {
@@ -928,8 +931,8 @@ fn build_tools() -> Vec<Tool> {
         },
         Tool {
             name: "screenshot",
-            description: "The screen as a JPEG (768 px long edge by default).",
-            schema: obj(&[r#""size":{"type":"integer","description":"long edge px"}"#, r#""native":{"type":"boolean"}"#, DEVICE], &[]),
+            description: "The screen as a JPEG (768 px long edge by default), or with `target` (@N, text, selector) just that element, from full resolution.",
+            schema: obj(&[r#""target":{"type":"string"}"#, r#""size":{"type":"integer","description":"long edge px"}"#, r#""native":{"type":"boolean"}"#, DEVICE], &[]),
         },
         Tool {
             name: "find",
@@ -1110,10 +1113,35 @@ fn call_tool(name: &str, args: &Value, engine: &Engine, device: Option<&str>, br
             }
         },
         "screenshot" => {
+            // `target`: only that element, cut from a full-resolution frame.
+            let rect = match s("target") {
+                None => None,
+                Some(_) if !engine.in_process() => {
+                    return Ok(Out::Text((false, "ERR:PRECONDITION:screenshot target needs the daemon reachable through the local adb server".into())));
+                }
+                Some(t) => match row_ref(&t) {
+                    Some(r) => match engine.row(dev, r) {
+                        Ok((_, _, _, Some(b))) => Some(b),
+                        Ok(_) => return Ok(Out::Text((false, format!("ERR:NOT_FOUND:@{r} has no bounds")))),
+                        Err(e) => return Ok(Out::Text((false, e))),
+                    },
+                    None => {
+                        let (mut ok, mut text) = engine.run(dev, &["find".to_string(), t.clone()]);
+                        // Not selector syntax: the target is the element's text.
+                        if !ok && text.contains("BAD_ARG") {
+                            (ok, text) = engine.run(dev, &["find".to_string(), format!(":has-text({t:?})")]);
+                        }
+                        match find_bounds(&text) {
+                            Some(b) if ok => Some(b),
+                            _ => return Ok(Out::Text((false, text))),
+                        }
+                    }
+                },
+            };
             if !engine.in_process() {
                 return screenshot_child(n("size"), b("native"), device, &engine.global).map(Out::Json);
             }
-            return Ok(Out::Json(match engine.screenshot(dev, n("size"), b("native")) {
+            return Ok(Out::Json(match engine.screenshot(dev, n("size"), b("native"), rect) {
                 Ok(jpeg) => format!(
                     r#"{{"content":[{{"type":"image","mimeType":"image/jpeg","data":"{}"}}],"isError":false}}"#,
                     base64(&jpeg)
@@ -1131,7 +1159,7 @@ fn call_tool(name: &str, args: &Value, engine: &Engine, device: Option<&str>, br
             match (s("target"), n("x"), n("y")) {
                 (Some(t), _, _) => match row_ref(&t) {
                     Some(r) => match engine.row(dev, r) {
-                        Ok((x, y, _)) => argv.extend([x.to_string(), y.to_string()]),
+                        Ok((x, y, _, _)) => argv.extend([x.to_string(), y.to_string()]),
                         Err(e) => return Ok(Out::Text((false, e))),
                     },
                     None => argv.push(t),
@@ -1150,7 +1178,7 @@ fn call_tool(name: &str, args: &Value, engine: &Engine, device: Option<&str>, br
             let sel = need("selector")?;
             let sel = match row_ref(&sel) {
                 Some(r) => match engine.row(dev, r) {
-                    Ok((_, _, daemon_sel)) => daemon_sel,
+                    Ok((_, _, daemon_sel, _)) => daemon_sel,
                     Err(e) => return Ok(Out::Text((false, e))),
                 },
                 None => sel,
@@ -1355,6 +1383,19 @@ const TAP_WAIT_CAP_MS: u64 = 4000;
 /// settled (or never stopped within the cap), so the target may be there now.
 fn moved_then_settled(reply: &str) -> bool {
     reply.contains("changed=1") || reply.contains("TIMEOUT:settle")
+}
+
+/// A node's screen rectangle: left, top, right, bottom.
+type Bounds = (i64, i64, i64, i64);
+
+/// The first match's `[l,t][r,b]` in `find` output.
+fn find_bounds(out: &str) -> Option<Bounds> {
+    let line = out.lines().next()?.strip_prefix('[')?;
+    let (a, rest) = line.split_once("][")?;
+    let b = rest.split(']').next()?;
+    let (l, t) = a.split_once(',')?;
+    let (r, bt) = b.split_once(',')?;
+    Some((l.parse().ok()?, t.parse().ok()?, r.parse().ok()?, bt.parse().ok()?))
 }
 
 /// A target with no selector syntax: one word, read as a class name.
@@ -1836,6 +1877,19 @@ mod tests {
         assert_eq!(toast_lines(""), "");
         // An older daemon without `toasts`: nothing to add.
         assert_eq!(toast_lines("ERR:UNKNOWN_CMD:toasts"), "");
+    }
+
+    #[test]
+    fn find_output_gives_the_first_match_bounds() {
+        let out = "[63,2166][272,2244] center=(167,2205)\tclass=android.widget.TextView\n[0,0][10,10] center=(5,5)";
+        assert_eq!(find_bounds(out), Some((63, 2166, 272, 2244)));
+        assert_eq!(find_bounds("ERR:NOT_FOUND:no node matched"), None);
+    }
+
+    #[test]
+    fn screenshot_takes_a_target() {
+        let shot = super::tools().iter().find(|t| t.name == "screenshot").unwrap();
+        assert!(shot.schema.contains(r#""target""#));
     }
 
     #[test]

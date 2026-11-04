@@ -98,6 +98,7 @@ internal class Screenshot(private val ua: UiAutomation) {
     }
 
     suspend fun capture(args: CaptureArgs): ByteArray {
+        args.rect?.let { return captureRegion(it, args) }
         val longEdge = resolveLongEdge(args)
         val quality: Int = clampQuality(args.quality)
         val png: Boolean = isPng(args.format)
@@ -125,6 +126,27 @@ internal class Screenshot(private val ua: UiAutomation) {
             }
         }
         return result
+    }
+
+    /**
+     * One element: cut from a native-size frame so a small element keeps its
+     * pixels, then scaled to fit [CaptureArgs.longEdge].
+     */
+    private suspend fun captureRegion(rect: android.graphics.Rect, args: CaptureArgs): ByteArray {
+        val fit = if (args.longEdge > 0) args.longEdge else 768
+        val quality = clampQuality(args.quality)
+        return try {
+            if (mirrorAvailable) {
+                val screen = displayManager?.let { MirrorDisplay.currentSize(it) }?.takeIf { it.x > 0 } ?: sourceSize
+                mirrorAt(max(sourceSize.x, sourceSize.y)).encodeRegion(rect, screen.x, screen.y, fit, args.format, quality)
+            } else withContext(Loop.Work) {
+                val full = ua.takeScreenshot() ?: return@withContext "ERR:screenshot-null".toByteArray()
+                try { encodeRegion(full, full.width, full.height, rect, full.width, full.height, fit, args.format, quality) }
+                finally { full.recycle() }
+            }
+        } catch (t: Throwable) {
+            ("ERR:screenshot-failed:" + t.javaClass.simpleName + ":" + t.message).toByteArray()
+        }
     }
 
     private suspend fun mirrorCapture(longEdge: Int, quality: Int, format: String?): ByteArray =
@@ -186,6 +208,8 @@ internal class Screenshot(private val ua: UiAutomation) {
         var tile: Int = 0 // 0 = default (128 for stream_tilejpeg)
         var gopSec: Int = 0 // 0 = default (1 for stream_h264)
         var secureCheck: Boolean = false
+        /** Only this screen rectangle (an element), at most [longEdge] (default 768) on its long side. */
+        var rect: android.graphics.Rect? = null
     }
 
     // ---- streaming hook ----
@@ -255,6 +279,17 @@ internal class Screenshot(private val ua: UiAutomation) {
         suspend fun encodeLatest(format: String?, quality: Int): ByteArray {
             refresh()
             return frameMutex.withLock { encodeCached(format, quality) }
+        }
+
+        /** The latest frame's part under screen rectangle [rect] of a [screenW]×[screenH] screen. */
+        suspend fun encodeRegion(rect: android.graphics.Rect, screenW: Int, screenH: Int, fit: Int, format: String?, quality: Int): ByteArray {
+            refresh()
+            return frameMutex.withLock {
+                withContext(Loop.Work) {
+                    val c = checkNotNull(cached) { "no frame yet" }
+                    encodeRegion(c, outW, outH, rect, screenW, screenH, fit, format, quality)
+                }
+            }
         }
 
         private suspend fun encodeCached(format: String?, quality: Int): ByteArray =
@@ -575,6 +610,36 @@ internal class Screenshot(private val ua: UiAutomation) {
                 if (token == tok) return true
             }
             return false
+        }
+
+        /**
+         * [rect] in screen coordinates cut from [frame] (its first [frameW]×[frameH]
+         * pixels show the [screenW]×[screenH] screen), scaled down to [fit] on
+         * its long side, encoded.
+         */
+        fun encodeRegion(
+            frame: Bitmap, frameW: Int, frameH: Int, rect: android.graphics.Rect,
+            screenW: Int, screenH: Int, fit: Int, format: String?, quality: Int,
+        ): ByteArray {
+            val sx = frameW.toFloat() / screenW.coerceAtLeast(1)
+            val sy = frameH.toFloat() / screenH.coerceAtLeast(1)
+            val l = (rect.left * sx).roundToInt().coerceIn(0, frameW)
+            val t = (rect.top * sy).roundToInt().coerceIn(0, frameH)
+            val r = (rect.right * sx).roundToInt().coerceIn(0, frameW)
+            val b = (rect.bottom * sy).roundToInt().coerceIn(0, frameH)
+            require(r > l && b > t) { "region off screen: $rect" }
+            val part = Bitmap.createBitmap(frame, l, t, r - l, b - t)
+            val long = max(part.width, part.height)
+            val out = if (long > fit) {
+                val s = fit.toFloat() / long
+                Bitmap.createScaledBitmap(part, max(1, (part.width * s).roundToInt()), max(1, (part.height * s).roundToInt()), true)
+            } else part
+            try {
+                return encode(out, format, quality)
+            } finally {
+                if (out !== part) out.recycle()
+                part.recycle()
+            }
         }
 
         private fun encode(bmp: Bitmap, format: String?, quality: Int): ByteArray {
