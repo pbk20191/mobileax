@@ -41,6 +41,8 @@ struct Hit {
     flags: String,
     bounds: (i32, i32, i32, i32),
     priority: Priority,
+    /// Nothing of the matched node shows: where it is (the dump's `off`).
+    off: Option<String>,
 }
 
 /// Session-aware tap-by-text. Honours retries/--visible/--clickable/--unique
@@ -93,6 +95,21 @@ pub fn run_session(
             }
         };
         match candidate(&hits, &flags) {
+            // Off screen: its bounds are cut at one edge (even inverted), so
+            // their centre can land on something else. Scroll toward it.
+            Ok(hit) if hit.off.is_some() && scrolls < MAX_SCROLLS => {
+                let dir = match hit.off.as_deref() {
+                    Some("below") => "up",
+                    Some("above") => "down",
+                    Some("right") => "left",
+                    _ => "right",
+                };
+                scrolls += 1;
+                attempt -= 1;
+                sess.conn.call(&format!("swipe_dir {dir}"))?;
+                sess.conn.call("wait_for_idle idle_ms=200 timeout_ms=2000")?;
+                continue;
+            }
             Ok(hit) => {
                 let (l, t, r, b) = hit.bounds;
                 let cx = (l + r) / 2;
@@ -315,6 +332,7 @@ fn id_hit(node: &Value, flags: &ActionFlags) -> Option<Hit> {
         text: field("text"), desc: field("desc"), cls: field("cls"), rid: field("rid"),
         flags: flag_str, bounds,
         priority: Priority::ExactText,
+        off: obj_get(node, "off").and_then(as_str).map(str::to_string),
     })
 }
 
@@ -385,6 +403,7 @@ fn find_all_within(root: &Value, screen_area: i64, query: &str, flags: &ActionFl
             flags: flag_str,
             bounds,
             priority: pri,
+            off: obj_get(node, "off").and_then(as_str).map(str::to_string),
         });
         Some(())
     });
