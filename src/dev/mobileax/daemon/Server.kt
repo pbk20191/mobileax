@@ -61,6 +61,7 @@ internal class Server(private val h: Handlers) {
             "node_long_click" -> return runNodeClick(cmd, true)
             "node_set_text" -> return runNodeSetText(cmd)
             "node_scroll" -> return runNodeScroll(cmd)
+            "scroll_forward" -> return h.nodes.scrollForward()
             "node_focus" -> return runNodeFocus(cmd)
             "submit" -> return runSubmit(cmd)
             "paste" -> return runPaste(cmd)

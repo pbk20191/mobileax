@@ -105,7 +105,7 @@ within ±5% on the total (+3.6%, +2.7%) with identical calls:
 | Scenario | Task | Measures |
 |---|---|---|
 | s1 | Settings → "디스플레이 및 터치" | basic navigation |
-| s2 | Accessibility list, 4 swipes (the end; the 4th sometimes still scrolls), last item | scrolling (later: find-with-scroll) |
+| s2 | Accessibility list, last item (`tap` with `scroll: true`; the baseline used 4 swipes) | scrolling (later: find-with-scroll) |
 | s3 | Settings search "배터리" → result | typing, result check |
 | s4 | Fresh camera: location-tag prompt, location permission | popups (later: auto-handling) |
 | s5 | Recents (two fixed cards), one `ui` | output size of a full-screen system UI |
@@ -126,3 +126,4 @@ Findings from writing the scenarios:
 |---|---:|---:|---:|
 | Tool description diet (`mcp/tool-diet`): shared arguments (`device`, `observe`, `timeout_ms`) explained once in the instructions; descriptions no longer repeat the instructions; no empty `required` | ±0 | ±0 (noise) | 2979 → 1959 (−34%): tools/list 2668 → 1605, instructions 311 → 354 |
 | The server rejects unknown arguments itself (naming the ones the tool takes), so schemas drop `additionalProperties:false` | ±0 | ±0 | 1959 → 1820 (−39% overall): tools/list 1605 → 1466 |
+| `tap`/`find` `scroll: true` (pages the biggest list with ACTION_SCROLL_FORWARD until the target shows); s2 now uses it | s2 8 → 4 | s2 1847 → 673 (−64%) | tools/list 1466 → 1513 (+47 for the argument) |

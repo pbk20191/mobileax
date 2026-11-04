@@ -865,6 +865,7 @@ struct Tool {
 const DEVICE: &str = r#""device":{"type":"string"}"#;
 const TIMEOUT: &str = r#""timeout_ms":{"type":"integer"}"#;
 const OBSERVE: &str = r#""observe":{"type":"boolean"}"#;
+const SCROLL: &str = r#""scroll":{"type":"boolean","description":"page the biggest list until the target shows"}"#;
 
 /// The tool list, built once (its schemas are leaked strings).
 fn tools() -> &'static [Tool] {
@@ -918,12 +919,12 @@ fn build_tools() -> Vec<Tool> {
         Tool {
             name: "find",
             description: "Print the nodes a selector matches, without acting.",
-            schema: obj(&[r#""selector":{"type":"string"}"#, TIMEOUT, DEVICE], &["selector"]),
+            schema: obj(&[r#""selector":{"type":"string"}"#, SCROLL, TIMEOUT, DEVICE], &["selector"]),
         },
         Tool {
             name: "tap",
             description: "Tap a target (@N, text, #resource_id, selector) or x,y.",
-            schema: obj(&[r#""target":{"type":"string"}"#, r#""x":{"type":"integer"}"#, r#""y":{"type":"integer"}"#, TIMEOUT, OBSERVE, DEVICE], &[]),
+            schema: obj(&[r#""target":{"type":"string"}"#, SCROLL, r#""x":{"type":"integer"}"#, r#""y":{"type":"integer"}"#, TIMEOUT, OBSERVE, DEVICE], &[]),
         },
         Tool {
             name: "type",
@@ -1230,6 +1231,29 @@ fn call_tool(name: &str, args: &Value, engine: &Engine, device: Option<&str>, br
         }
         _ => return Err((-32602, format!("unknown tool: {name}"))),
     };
+    // `scroll`: bring the target into view first, a page at a time.
+    let scrolled = match (b("scroll"), name) {
+        (true, "tap") => s("target").filter(|t| row_ref(t).is_none()),
+        (true, "find") => s("selector"),
+        _ => None,
+    }
+    .map(|sel| {
+        let run = |argv: &[String], act: bool| -> Reply {
+            if !engine.in_process() {
+                child(engine, device.clone(), argv)
+            } else if act {
+                engine.act(dev, argv, true, true)
+            } else {
+                engine.run(dev, argv)
+            }
+        };
+        let look = ["find".to_string(), sel];
+        let page = ["do".to_string(), "scroll_forward".to_string()];
+        scroll_until(SCROLL_MAX, || run(&look, false).0, || {
+            let (ok, text) = run(&page, true);
+            if ok && !text.contains("ERR:") { Ok(()) } else { Err(()) }
+        })
+    });
     let (ok, text) = match via {
         Via::Run | Via::Act if !engine.in_process() => child(engine, device, &argv),
         Via::Run => engine.run(dev, &argv),
@@ -1242,7 +1266,36 @@ fn call_tool(name: &str, args: &Value, engine: &Engine, device: Option<&str>, br
             r
         }
     };
+    let text = match scrolled {
+        Some(Scrolled { times: 0, found: true }) | None => text,
+        Some(Scrolled { times, found: true }) => format!("scrolled {times}×\n{text}"),
+        Some(Scrolled { times, found: false }) => format!("{text}\n(scrolled {times}× to the end of the list)"),
+    };
     Ok(Out::Text((ok, text)))
+}
+
+/// Most pages `scroll: true` turns before giving up.
+const SCROLL_MAX: u32 = 10;
+
+#[derive(Debug, PartialEq)]
+struct Scrolled {
+    times: u32,
+    found: bool,
+}
+
+/// Looks with [found], and while it misses scrolls a page with [scroll]:
+/// at most [max] pages, and not past a page that can't move (the end).
+fn scroll_until(max: u32, mut found: impl FnMut() -> bool, mut scroll: impl FnMut() -> Result<(), ()>) -> Scrolled {
+    let mut times = 0;
+    loop {
+        if found() {
+            return Scrolled { times, found: true };
+        }
+        if times == max || scroll().is_err() {
+            return Scrolled { times, found: false };
+        }
+        times += 1;
+    }
 }
 
 /// Tools a `batch` step may be: the ones that act or wait on the screen.
@@ -1633,6 +1686,29 @@ mod tests {
         // A typo in a later step stops the batch before its first step runs.
         let r = call("batch", r#"{"steps":[{"tool":"go","key":"back"},{"tool":"tap","targt":"OK"}]}"#);
         assert!(r.contains("BAD_ARG") && r.contains("targt") && r.contains(r#""isError":true"#), "{r}");
+    }
+
+    #[test]
+    fn scrolling_stops_when_found_at_the_end_or_at_the_cap() {
+        // Found on the third look: two scrolls.
+        let mut looks = 0;
+        let r = scroll_until(10, || { looks += 1; looks == 3 }, || Ok(()));
+        assert_eq!(r, Scrolled { times: 2, found: true });
+        // The list ends first.
+        let mut scrolls = 0;
+        let r = scroll_until(10, || false, || { scrolls += 1; if scrolls > 1 { Err(()) } else { Ok(()) } });
+        assert_eq!(r, Scrolled { times: 1, found: false });
+        // Never there: gives up after the cap.
+        let r = scroll_until(3, || false, || Ok(()));
+        assert_eq!(r, Scrolled { times: 3, found: false });
+        // Already on screen: no scroll.
+        assert_eq!(scroll_until(10, || true, || Ok(())), Scrolled { times: 0, found: true });
+    }
+
+    #[test]
+    fn tap_and_find_take_scroll() {
+        let has = |name: &str| super::tools().iter().find(|t| t.name == name).unwrap().schema.contains(r#""scroll""#);
+        assert!(has("tap") && has("find"));
     }
 
     #[test]
