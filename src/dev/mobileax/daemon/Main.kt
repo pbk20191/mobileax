@@ -43,6 +43,7 @@ data object Main {
             // Everything below runs as this: com.android.shell, our uid's package.
             val ctx = Binders.appContext()
             Logx.boot("mobaxd context=${ctx.opPackageName}")
+            exitWithSystemServer()
 
             val ready = CompletableDeferred<Server>()
             lateinit var server: MobaxServer
@@ -61,6 +62,23 @@ data object Main {
         } catch (t: Throwable) {
             Logx.fatal("startup failed", t)
             exitProcess(2)
+        }
+    }
+
+    /**
+     * When system_server dies (a soft restart), every binder this process
+     * holds is dead for good and each call fails with DeadSystemException.
+     * Exit instead: the next client call finds no daemon and starts a fresh
+     * one against the new system_server.
+     */
+    private fun exitWithSystemServer() {
+        try {
+            Binders.service("activity").linkToDeath({
+                Logx.bootWarn("system_server died; exiting so the next call starts a fresh daemon")
+                exitProcess(3)
+            }, 0)
+        } catch (t: Throwable) {
+            Logx.bootWarn("cannot watch system_server; a soft restart will leave this daemon stale", t)
         }
     }
 
