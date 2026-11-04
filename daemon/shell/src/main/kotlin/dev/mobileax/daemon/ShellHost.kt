@@ -87,20 +87,17 @@ internal object ShellContexts {
     const val SHELL_PACKAGE = "com.android.shell"
 }
 
-/** com.android.shell, our uid's package. */
-internal val ctx: Context get() = ShellContexts.appContext()
-
-/** The callingPackage for binder calls: it must belong to our uid. */
-internal const val callerPackage: String = ShellContexts.SHELL_PACKAGE
-
-/** Not installed as a package of its own: nothing to hide from package lists. */
-internal val selfPackage: String? = null
-
-/** The host redirects stdout and stderr to /data/local/tmp/mobax.log. */
-internal fun startupLine(line: String) = println(line)
-
-/** We are the shell: the command is our own child, `sh -c`. */
-internal fun openShell(cmd: String, mergeErr: Boolean, input: Input): ShellProc = ChildProc(cmd, mergeErr, input)
+/** The app_process daemon: the shell uid, com.android.shell's package. */
+internal object ShellHost : Host {
+    override val context: Context get() = ShellContexts.appContext()
+    override val callerPackage: String = ShellContexts.SHELL_PACKAGE
+    /** Not installed as a package of its own: nothing to hide from package lists. */
+    override val selfPackage: String? = null
+    /** The host redirects stdout and stderr to /data/local/tmp/mobax.log. */
+    override fun startupLine(line: String) = println(line)
+    /** We are the shell: the command is our own child, `sh -c`. */
+    override fun openShell(cmd: String, mergeErr: Boolean, input: Input): ShellProc = ChildProc(cmd, mergeErr, input)
+}
 
 private class ChildProc(cmd: String, mergeErr: Boolean, input: Input) : ShellProc() {
     private val p: Process

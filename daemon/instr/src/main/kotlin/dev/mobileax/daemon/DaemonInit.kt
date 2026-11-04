@@ -3,7 +3,7 @@ package dev.mobileax.daemon
 import android.app.ActivityManager
 import android.app.UiAutomation
 import android.os.IInterface
-import kotlinx.coroutines.withContext
+import android.content.Context
 import kotlin.system.exitProcess
 
 /**
@@ -15,7 +15,8 @@ import kotlin.system.exitProcess
  */
 internal object DaemonInit {
 
-    suspend fun init(): Server = withContext(Loop.Work) {
+    /** Runs on a Work thread: connecting UiAutomation blocks until its callback arrives on main. */
+    fun connect(): Pair<Context, UiAutomation> {
         val ua = try {
             dev.mobileax.daemon.ua.also { device }   // UiDevice shares it: same UA_FLAGS
         } catch (t: Throwable) {
@@ -26,7 +27,7 @@ internal object DaemonInit {
         exitWithConnection(ua)
         ua.adoptShellPermissionIdentity()
         runAsMonkey(ua)
-        buildServer(ctx, ua)
+        return InstrHost.context to ua
     }
 
     /**

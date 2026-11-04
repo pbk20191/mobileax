@@ -4,7 +4,7 @@ The on-device daemon speaks a length-prefixed binary protocol: each
 frame is `uint32 big-endian length` + payload (in both directions).
 Commands are ASCII text, `verb [k=v …]` style. This document lists
 every wire verb the daemon dispatches in
-`src/dev/mobileax/daemon/Server.java`.
+`daemon/core/src/main/kotlin/dev/mobileax/daemon/Server.kt` (and `Dispatch.kt`).
 
 Use these directly via `mobax do <wire>` or `mobax shell` (one socket, many
 commands). `ERR:<msg>` is returned on failure.

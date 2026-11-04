@@ -9,7 +9,7 @@ import android.util.Log
  * or the instrumentation's status, which `am instrument -w` prints); the
  * host shows that file when the daemon fails to come up.
  */
-internal object Logx {
+object Logx {
     private const val TAG = "mobaxd"
 
     private fun status(line: String) = startupLine(line)

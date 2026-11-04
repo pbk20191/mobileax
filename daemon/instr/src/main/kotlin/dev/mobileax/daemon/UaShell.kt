@@ -39,16 +39,16 @@ internal object UaShell {
 
     val useFiles: Boolean get() = forceFiles || Build.VERSION.SDK_INT < 34
 
+    fun open(cmd: String, mergeErr: Boolean, input: Input): ShellProc =
+        if (useFiles) FileProc(cmd, mergeErr, input) else RweProc(cmd, mergeErr, input)
+
     val dir: File by lazy {
-        (ctx.getExternalFilesDir("shell") ?: throw IOException("no external files dir")).also { d ->
+        (InstrHost.context.getExternalFilesDir("shell") ?: throw IOException("no external files dir")).also { d ->
             d.mkdirs()
             d.listFiles()?.forEach { it.delete() }   // left by a daemon that died mid-command
         }
     }
 }
-
-internal fun openShell(cmd: String, mergeErr: Boolean, input: Input): ShellProc =
-    if (UaShell.useFiles) FileProc(cmd, mergeErr, input) else RweProc(cmd, mergeErr, input)
 
 private class RweProc(cmd: String, mergeErr: Boolean, input: Input) : ShellProc() {
     private val tag = "__MOBAX_${nonce()}_"

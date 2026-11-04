@@ -4,9 +4,6 @@ import android.app.UiAutomation
 import android.content.Context
 import android.os.HandlerThread
 import android.os.Looper
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.lang.reflect.InvocationTargetException
 import kotlin.system.exitProcess
 
@@ -25,6 +22,7 @@ data object Main {
         var port = 9008
         for (a in args) if (a.startsWith("--port=")) port = a.substring("--port=".length).toInt()
 
+        Host.current = ShellHost
         try {
             disableHiddenApiRestrictions()
             initLikeActivityThreadMain()
@@ -43,19 +41,7 @@ data object Main {
             Logx.boot("mobaxd context=${ctx.opPackageName}")
             exitWithSystemServer()
 
-            val ready = CompletableDeferred<Server>()
-            lateinit var server: MobaxServer
-            server = MobaxServer(port, Dispatch(ready, onQuit = { server.close() }))
-            server.start()
-            Loop.scope.launch {
-                try {
-                    ready.complete(initDaemon(ctx))
-                    Logx.boot("mobaxd ready (sdk=${android.os.Build.VERSION.SDK_INT})")
-                } catch (t: Throwable) {
-                    Logx.fatal("init failed", t)
-                    exitProcess(2)
-                }
-            }
+            serve(port, connect = { ctx to connectUa() }, onInitFailed = { exitProcess(2) })
             Looper.loop()
         } catch (t: Throwable) {
             Logx.fatal("startup failed", t)
@@ -80,7 +66,8 @@ data object Main {
         }
     }
 
-    private suspend fun initDaemon(context: Context): Server = withContext(Loop.Work) {
+    /** Runs on a Work thread: connect() blocks until its callback arrives on the main looper. */
+    private fun connectUa(): UiAutomation {
         val ua = try {
             connectedUiAutomation(Looper.getMainLooper()).also { Logx.boot("mobaxd ua-looper=main") }
         } catch (t: Throwable) {
@@ -90,7 +77,7 @@ data object Main {
         }
         registerShutdownHook(ua)
         try { ua.setRunAsMonkey(true) } catch (t: Throwable) { Logx.bootWarn("setRunAsMonkey failed", t) }
-        buildServer(context, ua)
+        return ua
     }
 
     private fun connectedUiAutomation(looper: Looper): UiAutomation {

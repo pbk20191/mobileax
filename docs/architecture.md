@@ -24,12 +24,13 @@ build and starts `am instrument -w --no-hidden-api-checks …
 UiAutomator's `UiDevice`), shell permissions are adopted
 (`adoptShellPermissionIdentity`), and what needs the shell uid itself
 (dumpsys, settings, logcat, `cp`) runs through a framework-started `sh`. It
-exits when its `am instrument` process goes. Gradle builds both as flavors:
-`src/` is shared, `src-shell/` holds the app_process entry point and context
-setup (`build/mobax.jar`), `src-instr/` the instrumentation's
-(`build/mobaxd.apk`). `Shell` is the one interface both implement
-differently: the jar spawns `sh -c` as its own child, the APK goes through
-UiAutomation.
+exits when its `am instrument` process goes. Three Gradle modules:
+`daemon/core` is the daemon (a library), `daemon/shell` the app_process
+entry point and context setup (`build/mobax.jar`), `daemon/instr` the
+instrumentation's (`build/mobaxd.apk`). Each entry point sets
+`Host.current` (its Context, calling package, startup log and shell) and
+calls `serve()`. The shell is where they differ most: the jar spawns
+`sh -c` as its own child, the APK goes through UiAutomation.
 
 Either build listens on the abstract Unix socket `@mobaxd_<port>`
 (the host opens it through the adb server: `host:transport:SERIAL`, then
@@ -75,8 +76,9 @@ every verb so two daemon builds can be compared on a device.
 ## Layout
 
 ```
-src/dev/mobileax/daemon/      on-device daemon (Kotlin → dex → jar)
+daemon/core/                  on-device daemon (Kotlin library)
+daemon/shell/, daemon/instr/  its app_process and am-instrument entry points
 mobax-cli/                 host CLI — short-verb surface (`mobax use`, `mobax see`, …)
 mobax-viewer/              GUI mirror — winit + GPU decode (Metal/VideoToolbox, D3D11/MF, GLES/VA-API)
-build.gradle.kts              AGP: kotlinc → R8 → unsigned APK → build/mobax.jar  (build.sh wraps it)
+build.gradle.kts              AGP: kotlinc → R8 → build/mobax.jar, build/mobaxd.apk  (build.sh wraps it)
 ```

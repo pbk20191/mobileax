@@ -4,8 +4,6 @@ import android.os.Bundle
 import android.os.StrictMode
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.MonitoringInstrumentation
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.launch
 import kotlin.system.exitProcess
 
 /**
@@ -23,6 +21,7 @@ class MobaxInstrumentation : MonitoringInstrumentation() {
 
     override fun onCreate(arguments: Bundle) {
         super.onCreate(arguments)
+        Host.current = InstrHost
         val args = InstrumentationRegistry.getArguments()
         val port = args.getString("port")?.toIntOrNull() ?: 9008
         UaShell.forceFiles = args.getString("shell") == "file"
@@ -32,21 +31,7 @@ class MobaxInstrumentation : MonitoringInstrumentation() {
         StrictMode.setThreadPolicy(StrictMode.ThreadPolicy.LAX)
         try {
             Loop.init()
-            val ready = CompletableDeferred<Server>()
-            lateinit var server: MobaxServer
-            // `quit` exits the process right after (Dispatch); finish() could block here.
-            server = MobaxServer(port, Dispatch(ready, onQuit = { server.close() }))
-            server.start()
-            Loop.scope.launch {
-                try {
-                    ready.complete(DaemonInit.init())
-                    Logx.boot("mobaxd ready (sdk=${android.os.Build.VERSION.SDK_INT})")
-                } catch (t: Throwable) {
-                    Logx.fatal("init failed", t)
-                    ready.completeExceptionally(t)   // `ready` callers get the failure now
-                    giveUp()
-                }
-            }
+            serve(port, connect = { DaemonInit.connect() }, onInitFailed = { giveUp() })
         } catch (t: Throwable) {
             Logx.fatal("startup failed", t)
             giveUp()

@@ -12,7 +12,7 @@ import android.os.Process
  * app_process daemon lifts the hidden-API checks itself at start;
  * `am instrument --no-hidden-api-checks` does it for the instrumentation.
  */
-internal object Binders {
+object Binders {
     @JvmStatic
     fun service(name: String?): IBinder {
         try {

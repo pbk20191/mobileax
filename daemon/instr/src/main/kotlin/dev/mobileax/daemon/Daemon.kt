@@ -19,21 +19,23 @@ internal const val UA_FLAGS: Int = UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY
 
 internal val instr: Instrumentation get() = InstrumentationRegistry.getInstrumentation()
 
-/** Our own package (dev.mobileax.daemon); shell permissions are adopted on top. */
-internal val ctx: Context get() = instr.context
+/** The instrumentation: our own package (dev.mobileax.daemon), shell permissions adopted on top. */
+internal object InstrHost : Host {
+    override val context: Context get() = instr.context
+    override val callerPackage: String get() = context.opPackageName
+    /** Installed as a package of its own: hidden from package lists. */
+    override val selfPackage: String? get() = context.packageName
 
-/** The callingPackage for binder calls: it must belong to our uid. */
-internal val callerPackage: String get() = ctx.opPackageName
+    /** A line for mobax.log through `am instrument`; stderr (logcat) before
+     *  the instrumentation is registered. */
+    override fun startupLine(line: String) {
+        val i = try { InstrumentationRegistry.getInstrumentation() } catch (_: IllegalStateException) { null }
+        if (i == null) System.err.println(line)
+        else i.sendStatus(0, Bundle().apply { putString("mobaxd", line) })
+    }
 
-/** Installed as a package of its own: hidden from package lists. */
-internal val selfPackage: String? get() = ctx.packageName
-
-/** A line for mobax.log through `am instrument`; stderr (logcat) before
- *  the instrumentation is registered. */
-internal fun startupLine(line: String) {
-    val i = try { InstrumentationRegistry.getInstrumentation() } catch (_: IllegalStateException) { null }
-    if (i == null) System.err.println(line)
-    else i.sendStatus(0, Bundle().apply { putString("mobaxd", line) })
+    override fun openShell(cmd: String, mergeErr: Boolean, input: Shell.Input): Shell.ShellProc =
+        UaShell.open(cmd, mergeErr, input)
 }
 
 /** Connected on first use; the same flags return the cached instance. */

@@ -17,7 +17,7 @@ import java.security.SecureRandom
  * instrumentation daemon is an app uid and has the framework run them
  * through UiAutomation.
  */
-internal object Shell {
+object Shell {
 
     data class ShellResult(val out: String, val err: String, val exit: Int)
 
