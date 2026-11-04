@@ -119,3 +119,9 @@ Findings from writing the scenarios:
 - Settings search is its own package (`com.google.android.settings.intelligence`).
 - `wait` returning at once while a page is still settling makes the first
   swipe land at a slightly different scroll position each run.
+
+### Changes measured against the baseline
+
+| Change | Calls | Scenario tokens | Per-session cost |
+|---|---:|---:|---:|
+| Tool description diet (`mcp/tool-diet`): shared arguments (`device`, `observe`, `timeout_ms`) explained once in the instructions; descriptions no longer repeat the instructions; no empty `required` | ±0 | ±0 (noise) | 2979 → 1959 (−34%): tools/list 2668 → 1605, instructions 311 → 354 |

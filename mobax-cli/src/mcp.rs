@@ -58,6 +58,10 @@ reply with what changed: + added, ~ changed and - removed rows, or the whole new
 screen. You rarely need `ui` after an action. A ref stays valid until a reply \
 shows a new screen.\n\
 \n\
+Every tool takes an optional `device` (adb serial; default: the one `use` \
+connected). `observe: false` skips an action's settle and reply. \
+`timeout_ms` defaults to 10000.\n\
+\n\
 When you already know several steps (tap a field, fill it, press enter, wait for \
 the result), send them as one `batch`: one call instead of one per step.\n\
 \n\
@@ -856,94 +860,89 @@ struct Tool {
     schema: &'static str,
 }
 
-const DEVICE: &str = r#""device":{"type":"string","description":"Device serial (adb devices); omit for the current one"}"#;
-const TIMEOUT: &str = r#""timeout_ms":{"type":"integer","description":"Wait budget in ms (default 10000)"}"#;
-const OBSERVE: &str = r#""observe":{"type":"boolean","description":"Wait for the screen to settle and reply with what changed (default true)"}"#;
+// Shared arguments carry no description here: the instructions explain
+// them once, instead of once per tool in every session's tool list.
+const DEVICE: &str = r#""device":{"type":"string"}"#;
+const TIMEOUT: &str = r#""timeout_ms":{"type":"integer"}"#;
+const OBSERVE: &str = r#""observe":{"type":"boolean"}"#;
 
 fn tools() -> Vec<Tool> {
     // Schemas are assembled at startup from the shared fragments above.
     fn obj(props: &[&str], required: &[&str]) -> &'static str {
         let req: Vec<String> = required.iter().map(|r| format!("\"{r}\"")).collect();
+        let req = if req.is_empty() { String::new() } else { format!(r#","required":[{}]"#, req.join(",")) };
         Box::leak(
-            format!(
-                r#"{{"type":"object","properties":{{{}}},"required":[{}],"additionalProperties":false}}"#,
-                props.join(","),
-                req.join(",")
-            )
-            .into_boxed_str(),
+            format!(r#"{{"type":"object","properties":{{{}}}{req},"additionalProperties":false}}"#, props.join(","))
+                .into_boxed_str(),
         )
     }
     vec![
         Tool {
             name: "use",
-            description: "Connect to a device (or the only one attached) and start the on-device daemon. Call this first.",
-            schema: obj(&[r#""serial":{"type":"string","description":"Device serial from adb devices; omit when only one is attached"}"#], &[]),
+            description: "Connect to a device and start the on-device daemon. Call this first.",
+            schema: obj(&[r#""serial":{"type":"string","description":"omit when only one is attached"}"#], &[]),
         },
         Tool {
             name: "ui",
-            description: "List what is on screen as rows numbered @1, @2, …: verb (tap / fill / - for text), class, label, #resource-id, centre x,y and state. The main way to read the screen; act on a row by its @N.",
-            schema: obj(&[r#""scope":{"type":"string","enum":["app","active","all"],"description":"app: every app window incl. dialogs (default); active: focused window; all: system windows too"}"#, DEVICE], &[]),
+            description: "The screen as @N rows. The main way to read it.",
+            schema: obj(&[r#""scope":{"type":"string","enum":["app","active","all"],"description":"app (default): app windows and dialogs; active: focused window; all: system windows too"}"#, DEVICE], &[]),
         },
         Tool {
             name: "screenshot",
-            description: "Capture the screen as a JPEG image (768 px long edge by default).",
-            schema: obj(&[r#""size":{"type":"integer","description":"Long edge in px"}"#, r#""native":{"type":"boolean","description":"Full device resolution"}"#, DEVICE], &[]),
+            description: "The screen as a JPEG (768 px long edge by default).",
+            schema: obj(&[r#""size":{"type":"integer","description":"long edge px"}"#, r#""native":{"type":"boolean"}"#, DEVICE], &[]),
         },
         Tool {
             name: "find",
-            description: "Find nodes matching a selector and print them, without acting.",
-            schema: obj(&[r#""selector":{"type":"string","description":"Text, #resource_id, or CSS-like selector"}"#, TIMEOUT, DEVICE], &["selector"]),
+            description: "Print the nodes a selector matches, without acting.",
+            schema: obj(&[r#""selector":{"type":"string"}"#, TIMEOUT, DEVICE], &["selector"]),
         },
         Tool {
             name: "tap",
-            description: "Tap a row by its @N from `ui`, a node by text / #resource_id / selector, or coordinates x,y. Replies with what changed on screen.",
-            schema: obj(&[r#""target":{"type":"string","description":"@N, text, #resource_id, or selector"}"#, r#""x":{"type":"integer"}"#, r#""y":{"type":"integer"}"#, TIMEOUT, OBSERVE, DEVICE], &[]),
+            description: "Tap a target (@N, text, #resource_id, selector) or x,y.",
+            schema: obj(&[r#""target":{"type":"string"}"#, r#""x":{"type":"integer"}"#, r#""y":{"type":"integer"}"#, TIMEOUT, OBSERVE, DEVICE], &[]),
         },
         Tool {
             name: "type",
-            description: "Type text into the focused field at the cursor, in any language (Korean, emoji, …). Replies with what changed on screen.",
+            description: "Type text at the cursor of the focused field, any language.",
             schema: obj(&[r#""text":{"type":"string"}"#, OBSERVE, DEVICE], &["text"]),
         },
         Tool {
             name: "fill",
-            description: "Set the text of an edit field in one step (ACTION_SET_TEXT). The selector is a row's @N, or free text that picks the best-matching EditText. Replies with what changed on screen.",
-            schema: obj(&[r#""selector":{"type":"string","description":"@N, #resource_id, selector, or the field's label"}"#, r#""text":{"type":"string"}"#, OBSERVE, DEVICE], &["selector", "text"]),
+            description: "Set an edit field's text in one step. selector: @N, #resource_id, selector, or the field's label.",
+            schema: obj(&[r#""selector":{"type":"string"}"#, r#""text":{"type":"string"}"#, OBSERVE, DEVICE], &["selector", "text"]),
         },
         Tool {
             name: "swipe",
-            description: "Swipe in a direction (the finger's direction: up scrolls content down). Replies with what changed on screen.",
+            description: "Swipe the finger this way (up scrolls content down).",
             schema: obj(&[r#""direction":{"type":"string","enum":["up","down","left","right"]}"#, r#""duration_ms":{"type":"integer"}"#, OBSERVE, DEVICE], &["direction"]),
         },
         Tool {
             name: "go",
-            description: "Press a navigation / system key: back, home, recents, enter, … Replies with what changed on screen.",
-            schema: obj(&[r#""key":{"type":"string","description":"back, home, recents, enter, menu, …"}"#, OBSERVE, DEVICE], &["key"]),
+            description: "Press a key: back, home, recents, enter, menu, …",
+            schema: obj(&[r#""key":{"type":"string"}"#, OBSERVE, DEVICE], &["key"]),
         },
         Tool {
             name: "batch",
-            description: "Run several steps in one call when you already know the sequence, e.g. [{\"tool\":\"tap\",\"target\":\"@3\"},{\"tool\":\"fill\",\"selector\":\"Search\",\"text\":\"cats\"},{\"tool\":\"go\",\"key\":\"enter\"},{\"tool\":\"wait\",\"target\":\"Results\"}]. Each step takes that tool's arguments; each action waits for the screen to settle before the next. Stops at the first failure. Replies with one line per step, then what changed on screen over the whole batch. @N refs are from the screen you last saw: once a step opens another screen, name later targets by text or selector.",
+            description: "Several steps in one call, e.g. [{\"tool\":\"tap\",\"target\":\"@3\"},{\"tool\":\"go\",\"key\":\"enter\"}]. Each settles before the next; stops at the first failure. Replies one line per step, then what changed overall. @N refs are from the screen you last saw: after a step opens another screen, use text or selectors.",
             schema: obj(&[
-                r#""steps":{"type":"array","maxItems":20,"items":{"type":"object","properties":{"tool":{"type":"string","enum":["tap","type","fill","swipe","go","open","close","wait","find","watch"]}},"required":["tool"]},"description":"Steps in order: {\"tool\": NAME, ...that tool's arguments}"}"#,
+                r#""steps":{"type":"array","maxItems":20,"items":{"type":"object","properties":{"tool":{"type":"string","enum":["tap","type","fill","swipe","go","open","close","wait","find","watch"]}},"required":["tool"]},"description":"{\"tool\": NAME, ...its arguments}"}"#,
                 DEVICE,
             ], &["steps"]),
         },
         Tool {
             name: "wait",
-            description: "Wait until text / a selector appears on screen.",
+            description: "Wait until a target appears.",
             schema: obj(&[r#""target":{"type":"string"}"#, TIMEOUT, DEVICE], &["target"]),
         },
         Tool {
             name: "watch",
-            description: "Wait until the screen differs from what you last saw, or until some text shows, then reply with what changed. The device pushes changes, so this costs nothing while waiting. Use it instead of calling `ui` again and again (a download finishing, a reply arriving, an animation ending).",
-            schema: obj(&[
-                r#""until":{"type":"string","description":"Wait for a row showing this text (case-insensitive) instead of any change"}"#,
-                r#""timeout_ms":{"type":"integer","description":"How long to wait (default 10000)"}"#,
-                DEVICE,
-            ], &[]),
+            description: "Wait until the screen differs from what you last saw (or `until` a row shows this text, case-insensitive), then reply with what changed.",
+            schema: obj(&[r#""until":{"type":"string"}"#, TIMEOUT, DEVICE], &[]),
         },
         Tool {
             name: "open",
-            description: "Launch an app by package name (com.android.settings), PKG/.Activity, or app label. Replies with the screen it opens.",
+            description: "Launch an app: package, PKG/.Activity, or label.",
             schema: obj(&[r#""app":{"type":"string"}"#, OBSERVE, DEVICE], &["app"]),
         },
         Tool {
@@ -953,26 +952,26 @@ fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "logcat",
-            description: "Recent device log lines (logcat), newest last. Filter by app or pid, priority, tags, a pattern or time; drop noise with exclude; use crash=true for crash stacks.",
+            description: "Recent logcat lines, newest last. level: minimum priority; tags: TAG or TAG:LEVEL; grep: regexes, one must match; exclude: drop lines containing; since: 90, 30s, 5m, 2h; format: logcat -v (threadtime); lines: default 100; crash: crash buffer; clear: clear instead of read.",
             schema: obj(&[
-                r#""package":{"type":"string","description":"Only this app's running process"}"#,
-                r#""pid":{"type":"integer","description":"Only this process id"}"#,
-                r#""level":{"type":"string","enum":["V","D","I","W","E","F"],"description":"Minimum priority"}"#,
-                r#""tags":{"type":"array","items":{"type":"string"},"description":"Only these tags (TAG or TAG:LEVEL)"}"#,
-                r#""grep":{"type":"array","items":{"type":"string"},"description":"Regexes (ECMAScript); a line must match one of them"}"#,
-                r#""exclude":{"type":"array","items":{"type":"string"},"description":"Drop lines containing any of these texts"}"#,
-                r#""ignore_case":{"type":"boolean","description":"Case-insensitive grep and exclude"}"#,
-                r#""since":{"type":"string","description":"Only lines from the last N seconds/minutes/hours: 90, 30s, 5m, 2h"}"#,
-                r#""format":{"type":"string","description":"logcat -v output format: brief, threadtime (default), time, tag, raw, long, …"}"#,
-                r#""lines":{"type":"integer","description":"How many lines (default 100)"}"#,
-                r#""crash":{"type":"boolean","description":"Read the crash buffer"}"#,
-                r#""clear":{"type":"boolean","description":"Clear the log buffers instead of reading"}"#,
+                r#""package":{"type":"string"}"#,
+                r#""pid":{"type":"integer"}"#,
+                r#""level":{"type":"string","enum":["V","D","I","W","E","F"]}"#,
+                r#""tags":{"type":"array","items":{"type":"string"}}"#,
+                r#""grep":{"type":"array","items":{"type":"string"}}"#,
+                r#""exclude":{"type":"array","items":{"type":"string"}}"#,
+                r#""ignore_case":{"type":"boolean"}"#,
+                r#""since":{"type":"string"}"#,
+                r#""format":{"type":"string"}"#,
+                r#""lines":{"type":"integer"}"#,
+                r#""crash":{"type":"boolean"}"#,
+                r#""clear":{"type":"boolean"}"#,
                 DEVICE,
             ], &[]),
         },
         Tool {
             name: "info",
-            description: "Device and daemon info: model, Android version, display size, foreground app.",
+            description: "Model, Android version, display size, foreground app.",
             schema: obj(&[DEVICE], &[]),
         },
         Tool {
@@ -982,8 +981,8 @@ fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "mobax",
-            description: "Run any other mobax CLI verb, e.g. [\"apps\",\"--3rd\"], [\"prop\",\"ro.build.version.sdk\"], [\"logs\",\"--tail\",\"50\"]. See `mobax --help`.",
-            schema: obj(&[r#""args":{"type":"array","items":{"type":"string"},"description":"Verb and arguments, without the leading mobax"}"#, DEVICE], &["args"]),
+            description: "Any other mobax CLI verb, e.g. [\"apps\",\"--3rd\"], [\"prop\",\"ro.build.version.sdk\"]. See `mobax --help`.",
+            schema: obj(&[r#""args":{"type":"array","items":{"type":"string"}}"#, DEVICE], &["args"]),
         },
     ]
 }
@@ -1524,6 +1523,22 @@ mod tests {
         assert!(r.contains(r#""protocolVersion":"2025-03-26""#), "{r}");
         let r = handle(r#"{"jsonrpc":"2.0","id":"a","method":"initialize","params":{"protocolVersion":"1999-01-01"}}"#, &Engine::new(&[])).unwrap();
         assert!(r.contains(r#""id":"a""#) && r.contains(PROTOCOL_VERSIONS[0]), "{r}");
+    }
+
+    /// scripts/agent-bench.py's yardstick: ASCII chars / 4 (rounded up) + one per other char.
+    fn approx_tokens(s: &str) -> usize {
+        let ascii = s.chars().filter(|c| c.is_ascii()).count();
+        ascii.div_ceil(4) + (s.chars().count() - ascii)
+    }
+
+    #[test]
+    fn session_cost_stays_within_budget() {
+        // Every session carries the instructions and the tool list; they
+        // were 311 + 2668 before trimming (the bench counts tools/list with
+        // JSON spacing; the raw reply here is a little smaller). Raise only with a reason.
+        let list = handle(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#, &Engine::new(&[])).unwrap();
+        let cost = approx_tokens(INSTRUCTIONS) + approx_tokens(&list);
+        assert!(cost <= 2100, "instructions + tools/list = {cost} approx tokens");
     }
 
     #[test]
