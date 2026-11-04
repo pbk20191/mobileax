@@ -1,0 +1,48 @@
+{
+ "name": "s5-heavy-screen",
+ "note": "One look at Recents: output size of a full-screen system UI. Recents keeps tasks across force-stops and shows the two most recent cards, so setup opens two fixed tasks last (Accessibility, then Settings) to make the visible cards the same whatever ran before.",
+ "setup": [
+  {
+   "tool": "close",
+   "args": {
+    "package": "com.android.settings"
+   }
+  },
+  {
+   "tool": "open",
+   "args": {
+    "app": "com.android.settings/.Settings$AccessibilitySettingsActivity"
+   }
+  },
+  {
+   "tool": "open",
+   "args": {
+    "app": "com.android.settings"
+   }
+  },
+  {
+   "tool": "go",
+   "args": {
+    "key": "home"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "tool": "go",
+   "args": {
+    "key": "recents"
+   }
+  },
+  {
+   "tool": "ui",
+   "args": {}
+  }
+ ],
+ "check": {
+  "tool": "wait",
+  "args": {
+   "target": "#task_view_single"
+  }
+ }
+}

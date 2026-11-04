@@ -1,0 +1,70 @@
+{
+ "name": "s4-permission-popup",
+ "note": "Camera first run: the location-tag prompt ('다음'), then the location permission dialog. CAMERA and RECORD_AUDIO are granted by default on this image, so location is the popup. pm clear alone keeps the user-set location grant, hence the revokes; setup runs them through host adb (`mobax shell` is a REPL, MCP has no device shell). Bare-word targets read as class names, hence :has-text.",
+ "setup": [
+  {
+   "adb": [
+    "shell",
+    "pm",
+    "clear",
+    "com.android.camera2"
+   ]
+  },
+  {
+   "adb": [
+    "shell",
+    "pm",
+    "revoke",
+    "com.android.camera2",
+    "android.permission.ACCESS_FINE_LOCATION"
+   ]
+  },
+  {
+   "adb": [
+    "shell",
+    "pm",
+    "revoke",
+    "com.android.camera2",
+    "android.permission.ACCESS_COARSE_LOCATION"
+   ]
+  },
+  {
+   "tool": "go",
+   "args": {
+    "key": "home"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "tool": "open",
+   "args": {
+    "app": "com.android.camera2"
+   }
+  },
+  {
+   "tool": "tap",
+   "args": {
+    "target": ":has-text(\"다음\")"
+   }
+  },
+  {
+   "tool": "wait",
+   "args": {
+    "target": "#permission_allow_foreground_only_button"
+   }
+  },
+  {
+   "tool": "tap",
+   "args": {
+    "target": "#permission_allow_foreground_only_button"
+   }
+  }
+ ],
+ "check": {
+  "tool": "wait",
+  "args": {
+   "target": "#shutter_button"
+  }
+ }
+}

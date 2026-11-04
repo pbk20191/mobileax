@@ -1,0 +1,56 @@
+{
+ "name": "s3-search-form",
+ "note": "Settings search (a separate app, closed in setup): type a query, open the result.",
+ "setup": [
+  {
+   "tool": "close",
+   "args": {
+    "package": "com.google.android.settings.intelligence"
+   }
+  },
+  {
+   "tool": "close",
+   "args": {
+    "package": "com.android.settings"
+   }
+  },
+  {
+   "tool": "go",
+   "args": {
+    "key": "home"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "tool": "open",
+   "args": {
+    "app": "com.android.settings"
+   }
+  },
+  {
+   "tool": "tap",
+   "args": {
+    "target": "설정 검색"
+   }
+  },
+  {
+   "tool": "type",
+   "args": {
+    "text": "배터리"
+   }
+  },
+  {
+   "tool": "tap",
+   "args": {
+    "target": "배터리 사용량"
+   }
+  }
+ ],
+ "check": {
+  "tool": "wait",
+  "args": {
+   "target": ":has-text(\"마지막 완충 이후\")"
+  }
+ }
+}

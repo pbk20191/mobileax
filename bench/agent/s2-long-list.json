@@ -1,0 +1,72 @@
+{
+ "name": "s2-long-list",
+ "note": "Accessibility settings: a long list, four slow swipes reach the end of the list (the page is still settling when the first swipe lands, so mid-list positions drift a little; the end does not), then the last item. The all-apps list was tried first: it shows only 9 apps on this image and does not scroll. A bare word target is read as a class-name selector (NOT_FOUND), hence :has-text.",
+ "setup": [
+  {
+   "tool": "close",
+   "args": {
+    "package": "com.android.settings"
+   }
+  },
+  {
+   "tool": "go",
+   "args": {
+    "key": "home"
+   }
+  }
+ ],
+ "steps": [
+  {
+   "tool": "open",
+   "args": {
+    "app": "com.android.settings/.Settings$AccessibilitySettingsActivity"
+   }
+  },
+  {
+   "tool": "wait",
+   "args": {
+    "target": "확대"
+   }
+  },
+  {
+   "tool": "swipe",
+   "args": {
+    "direction": "up",
+    "duration_ms": 800
+   }
+  },
+  {
+   "tool": "swipe",
+   "args": {
+    "direction": "up",
+    "duration_ms": 800
+   }
+  },
+  {
+   "tool": "swipe",
+   "args": {
+    "direction": "up",
+    "duration_ms": 800
+   }
+  },
+  {
+   "tool": "swipe",
+   "args": {
+    "direction": "up",
+    "duration_ms": 800
+   }
+  },
+  {
+   "tool": "tap",
+   "args": {
+    "target": ":has-text(\"텍스트 음성 변환 출력\")"
+   }
+  }
+ ],
+ "check": {
+  "tool": "wait",
+  "args": {
+   "target": ":has-text(\"말하는 속도\")"
+  }
+ }
+}
