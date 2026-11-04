@@ -48,9 +48,9 @@
   }
  ],
  "check": {
-  "tool": "find",
+  "tool": "wait",
   "args": {
-   "selector": ":has-text(\"마지막 완충 이후\")"
+   "target": ":has-text(\"마지막 완충 이후\")"
   }
  }
 }

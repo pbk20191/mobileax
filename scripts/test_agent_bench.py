@@ -51,6 +51,12 @@ class AgentBenchTest(unittest.TestCase):
         self.assertEqual(ran, [["shell", "pm", "clear", "p"]])
         self.assertEqual(r["calls"], 1)
 
+    def test_summary_tokens_are_the_median_run(self):
+        runs = [{"name": "x", "ok": True, "calls": 2, "tokens": t, "ms": 1.0} for t in (300, 100, 200)]
+        r = ab.summarize(runs)
+        self.assertEqual(r["tokens"], 200)
+        self.assertEqual(r["tokens_spread"], 200)
+
 
 if __name__ == "__main__":
     unittest.main()

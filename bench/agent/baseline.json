@@ -1,0 +1,970 @@
+{
+ "tools_tokens": 2668,
+ "scenarios": [
+  {
+   "name": "s1-settings-item",
+   "ok": true,
+   "calls": 3,
+   "tokens": 818,
+   "tokens_spread": 1,
+   "ms": 7750.0,
+   "runs": [
+    {
+     "name": "s1-settings-item",
+     "ok": true,
+     "calls": 3,
+     "tokens": 817,
+     "chars": 2295,
+     "ms": 7750.0,
+     "steps": [
+      {
+       "tool": "open",
+       "args": {
+        "app": "com.android.settings"
+       },
+       "tokens": 444,
+       "chars": 1189,
+       "ms": 3219.0,
+       "error": null,
+       "reply": "ok started=com.android.settings/.Settings result=2\nsettled in 3133 ms · com.google.android.settings.intelligence · new screen, 14 rows\n@1   tap   ImageButton   "
+      },
+      {
+       "tool": "tap",
+       "args": {
+        "target": "디스플레이 및 터치"
+       },
+       "tokens": 366,
+       "chars": 1080,
+       "ms": 4469.0,
+       "error": null,
+       "reply": "tapped \"디스플레이 및 터치\" cls=android.widget.LinearLayout flags=cfe bounds=[0,2382,1080,2400] at (540,2391) via tap → ok\nsettled in 980 ms · com.android.settings · ne"
+      },
+      {
+       "tool": "wait",
+       "args": {
+        "target": ":has-text(\"어두운 테마\")"
+       },
+       "tokens": 7,
+       "chars": 26,
+       "ms": 62.0,
+       "error": null,
+       "reply": "ok x=192 y=1350 elapsed=69"
+      }
+     ]
+    },
+    {
+     "name": "s1-settings-item",
+     "ok": true,
+     "calls": 3,
+     "tokens": 818,
+     "chars": 2296,
+     "ms": 7515.0,
+     "steps": [
+      {
+       "tool": "open",
+       "args": {
+        "app": "com.android.settings"
+       },
+       "tokens": 444,
+       "chars": 1189,
+       "ms": 2500.0,
+       "error": null,
+       "reply": "ok started=com.android.settings/.Settings result=2\nsettled in 2468 ms · com.google.android.settings.intelligence · new screen, 14 rows\n@1   tap   ImageButton   "
+      },
+      {
+       "tool": "tap",
+       "args": {
+        "target": "디스플레이 및 터치"
+       },
+       "tokens": 367,
+       "chars": 1081,
+       "ms": 5000.0,
+       "error": null,
+       "reply": "tapped \"디스플레이 및 터치\" cls=android.widget.LinearLayout flags=cfe bounds=[0,2382,1080,2400] at (540,2391) via tap → ok\nsettled in 1077 ms · com.android.settings · n"
+      },
+      {
+       "tool": "wait",
+       "args": {
+        "target": ":has-text(\"어두운 테마\")"
+       },
+       "tokens": 7,
+       "chars": 26,
+       "ms": 15.0,
+       "error": null,
+       "reply": "ok x=192 y=1350 elapsed=15"
+      }
+     ]
+    },
+    {
+     "name": "s1-settings-item",
+     "ok": true,
+     "calls": 3,
+     "tokens": 818,
+     "chars": 2295,
+     "ms": 8422.0,
+     "steps": [
+      {
+       "tool": "open",
+       "args": {
+        "app": "com.android.settings"
+       },
+       "tokens": 444,
+       "chars": 1189,
+       "ms": 2828.0,
+       "error": null,
+       "reply": "ok started=com.android.settings/.Settings result=2\nsettled in 2822 ms · com.google.android.settings.intelligence · new screen, 14 rows\n@1   tap   ImageButton   "
+      },
+      {
+       "tool": "tap",
+       "args": {
+        "target": "디스플레이 및 터치"
+       },
+       "tokens": 367,
+       "chars": 1081,
+       "ms": 5594.0,
+       "error": null,
+       "reply": "tapped \"디스플레이 및 터치\" cls=android.widget.LinearLayout flags=cfe bounds=[0,2382,1080,2400] at (540,2391) via tap → ok\nsettled in 2519 ms · com.android.settings · n"
+      },
+      {
+       "tool": "wait",
+       "args": {
+        "target": ":has-text(\"어두운 테마\")"
+       },
+       "tokens": 7,
+       "chars": 25,
+       "ms": 0.0,
+       "error": null,
+       "reply": "ok x=192 y=1350 elapsed=4"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "s2-long-list",
+   "ok": true,
+   "calls": 8,
+   "tokens": 1870,
+   "tokens_spread": 388,
+   "ms": 17594.0,
+   "runs": [
+    {
+     "name": "s2-long-list",
+     "ok": true,
+     "calls": 8,
+     "tokens": 1870,
+     "chars": 5356,
+     "ms": 18969.0,
+     "steps": [
+      {
+       "tool": "open",
+       "args": {
+        "app": "com.android.settings/.Settings$AccessibilitySettingsActivity"
+       },
+       "tokens": 318,
+       "chars": 906,
+       "ms": 3328.0,
+       "error": null,
+       "reply": "ok started=com.android.settings/.Settings$AccessibilitySettingsActivity result=0\nsettled in 3315 ms · com.android.settings · new screen, 12 rows\n@1   -    Frame"
+      },
+      {
+       "tool": "wait",
+       "args": {
+        "target": "확대"
+       },
+       "tokens": 9,
+       "chars": 35,
+       "ms": 0.0,
+       "error": null,
+       "reply": "ok x=189 y=1384 w=98 h=78 elapsed=0"
+      },
+      {
+       "tool": "swipe",
+       "args": {
+        "direction": "up",
+        "duration_ms": 800
+       },
+       "tokens": 370,
+       "chars": 1020,
+       "ms": 2110.0,
+       "error": null,
+       "reply": "ok dir=up x1=540 y1=1920 x2=540 y2=480 dur=800\nsettled in 663 ms · com.android.settings · new screen, 14 rows\n@1   -    FrameLayout   \"접근성\"  #collapsing_toolbar"
+      },
+      {
+       "tool": "swipe",
+       "args": {
+        "direction": "up",
+        "duration_ms": 800
+       },
+       "tokens": 415,
+       "chars": 1125,
+       "ms": 3531.0,
+       "error": null,
+       "reply": "ok dir=up x1=540 y1=1920 x2=540 y2=480 dur=800\nsettled in 2003 ms · com.android.settings · new screen, 15 rows\n@1   -    FrameLayout   \"접근성\"  #collapsing_toolba"
+      },
+      {
+       "tool": "swipe",
+       "args": {
+        "direction": "up",
+        "duration_ms": 800
+       },
+       "tokens": 385,
+       "chars": 1071,
+       "ms": 3250.0,
+       "error": null,
+       "reply": "ok dir=up x1=540 y1=1920 x2=540 y2=480 dur=800\nsettled in 1798 ms · com.android.settings · new screen, 15 rows\n@1   -    FrameLayout   \"접근성\"  #collapsing_toolba"
+      },
+      {
+       "tool": "swipe",
+       "args": {
+        "direction": "up",
+        "duration_ms": 800
+       },
+       "tokens": 30,
+       "chars": 111,
+       "ms": 2016.0,
+       "error": null,
+       "reply": "ok dir=up x1=540 y1=1920 x2=540 y2=480 dur=800\nno reaction on screen · com.android.settings · no visible change"
+      },
+      {
+       "tool": "tap",
+       "args": {
+        "target": ":has-text(\"텍스트 음성 변환 출력\")"
+       },
+       "tokens": 336,
+       "chars": 1062,
+       "ms": 4703.0,
+       "error": null,
+       "reply": "tapped \"텍스트 음성 변환 출력\" cls=android.widget.TextView flags=ev bounds=[63,2217,543,2295] at (303,2256) via tap → ok\nsettled in 3938 ms · com.android.settings · new "
+      },
+      {
+       "tool": "wait",
+       "args": {
+        "target": ":has-text(\"말하는 속도\")"
+       },
+       "tokens": 7,
+       "chars": 26,
+       "ms": 31.0,
+       "error": null,
+       "reply": "ok x=192 y=1149 elapsed=27"
+      }
+     ]
+    },
+    {
+     "name": "s2-long-list",
+     "ok": true,
+     "calls": 8,
+     "tokens": 2258,
+     "chars": 6361,
+     "ms": 17594.0,
+     "steps": [
+      {
+       "tool": "open",
+       "args": {
+        "app": "com.android.settings/.Settings$AccessibilitySettingsActivity"
+       },
+       "tokens": 318,
+       "chars": 906,
+       "ms": 3734.0,
+       "error": null,
+       "reply": "ok started=com.android.settings/.Settings$AccessibilitySettingsActivity result=0\nsettled in 3707 ms · com.android.settings · new screen, 12 rows\n@1   -    Frame"
+      },
+      {
+       "tool": "wait",
+       "args": {
+        "target": "확대"
+       },
+       "tokens": 9,
+       "chars": 35,
+       "ms": 0.0,
+       "error": null,
+       "reply": "ok x=189 y=1384 w=98 h=78 elapsed=0"
+      },
+      {
+       "tool": "swipe",
+       "args": {
+        "direction": "up",
+        "duration_ms": 800
+       },
+       "tokens": 370,
+       "chars": 1020,
+       "ms": 2188.0,
+       "error": null,
+       "reply": "ok dir=up x1=540 y1=1920 x2=540 y2=480 dur=800\nsettled in 705 ms · com.android.settings · new screen, 14 rows\n@1   -    FrameLayout   \"접근성\"  #collapsing_toolbar"
+      },
+      {
+       "tool": "swipe",
+       "args": {
+        "direction": "up",
+        "duration_ms": 800
+       },
+       "tokens": 424,
+       "chars": 1136,
+       "ms": 2187.0,
+       "error": null,
+       "reply": "ok dir=up x1=540 y1=1920 x2=540 y2=480 dur=800\nsettled in 771 ms · com.android.settings · new screen, 15 rows\n@1   -    FrameLayout   \"접근성\"  #collapsing_toolbar"
+      },
+      {
+       "tool": "swipe",
+       "args": {
+        "direction": "up",
+        "duration_ms": 800
+       },
+       "tokens": 409,
+       "chars": 1106,
+       "ms": 2282.0,
+       "error": null,
+       "reply": "ok dir=up x1=540 y1=1920 x2=540 y2=480 dur=800\nsettled in 745 ms · com.android.settings · new screen, 15 rows\n@1   -    FrameLayout   \"접근성\"  #collapsing_toolbar"
+      },
+      {
+       "tool": "swipe",
+       "args": {
+        "direction": "up",
+        "duration_ms": 800
+       },
+       "tokens": 385,
+       "chars": 1071,
+       "ms": 3078.0,
+       "error": null,
+       "reply": "ok dir=up x1=540 y1=1920 x2=540 y2=480 dur=800\nsettled in 1488 ms · com.android.settings · new screen, 15 rows\n@1   -    FrameLayout   \"접근성\"  #collapsing_toolba"
+      },
+      {
+       "tool": "tap",
+       "args": {
+        "target": ":has-text(\"텍스트 음성 변환 출력\")"
+       },
+       "tokens": 336,
+       "chars": 1062,
+       "ms": 4125.0,
+       "error": null,
+       "reply": "tapped \"텍스트 음성 변환 출력\" cls=android.widget.TextView flags=ev bounds=[63,2217,543,2295] at (303,2256) via tap → ok\nsettled in 3723 ms · com.android.settings · new "
+      },
+      {
+       "tool": "wait",
+       "args": {
+        "target": ":has-text(\"말하는 속도\")"
+       },
+       "tokens": 7,
+       "chars": 25,
+       "ms": 0.0,
+       "error": null,
+       "reply": "ok x=192 y=1149 elapsed=4"
+      }
+     ]
+    },
+    {
+     "name": "s2-long-list",
+     "ok": true,
+     "calls": 8,
+     "tokens": 1870,
+     "chars": 5354,
+     "ms": 16562.0,
+     "steps": [
+      {
+       "tool": "open",
+       "args": {
+        "app": "com.android.settings/.Settings$AccessibilitySettingsActivity"
+       },
+       "tokens": 318,
+       "chars": 906,
+       "ms": 3375.0,
+       "error": null,
+       "reply": "ok started=com.android.settings/.Settings$AccessibilitySettingsActivity result=0\nsettled in 3359 ms · com.android.settings · new screen, 12 rows\n@1   -    Frame"
+      },
+      {
+       "tool": "wait",
+       "args": {
+        "target": "확대"
+       },
+       "tokens": 9,
+       "chars": 35,
+       "ms": 0.0,
+       "error": null,
+       "reply": "ok x=189 y=1384 w=98 h=78 elapsed=0"
+      },
+      {
+       "tool": "swipe",
+       "args": {
+        "direction": "up",
+        "duration_ms": 800
+       },
+       "tokens": 370,
+       "chars": 1020,
+       "ms": 2125.0,
+       "error": null,
+       "reply": "ok dir=up x1=540 y1=1920 x2=540 y2=480 dur=800\nsettled in 666 ms · com.android.settings · new screen, 14 rows\n@1   -    FrameLayout   \"접근성\"  #collapsing_toolbar"
+      },
+      {
+       "tool": "swipe",
+       "args": {
+        "direction": "up",
+        "duration_ms": 800
+       },
+       "tokens": 415,
+       "chars": 1124,
+       "ms": 2047.0,
+       "error": null,
+       "reply": "ok dir=up x1=540 y1=1920 x2=540 y2=480 dur=800\nsettled in 654 ms · com.android.settings · new screen, 15 rows\n@1   -    FrameLayout   \"접근성\"  #collapsing_toolbar"
+      },
+      {
+       "tool": "swipe",
+       "args": {
+        "direction": "up",
+        "duration_ms": 800
+       },
+       "tokens": 385,
+       "chars": 1071,
+       "ms": 3078.0,
+       "error": null,
+       "reply": "ok dir=up x1=540 y1=1920 x2=540 y2=480 dur=800\nsettled in 1679 ms · com.android.settings · new screen, 15 rows\n@1   -    FrameLayout   \"접근성\"  #collapsing_toolba"
+      },
+      {
+       "tool": "swipe",
+       "args": {
+        "direction": "up",
+        "duration_ms": 800
+       },
+       "tokens": 30,
+       "chars": 111,
+       "ms": 2015.0,
+       "error": null,
+       "reply": "ok dir=up x1=540 y1=1920 x2=540 y2=480 dur=800\nno reaction on screen · com.android.settings · no visible change"
+      },
+      {
+       "tool": "tap",
+       "args": {
+        "target": ":has-text(\"텍스트 음성 변환 출력\")"
+       },
+       "tokens": 336,
+       "chars": 1062,
+       "ms": 3907.0,
+       "error": null,
+       "reply": "tapped \"텍스트 음성 변환 출력\" cls=android.widget.TextView flags=ev bounds=[63,2217,543,2295] at (303,2256) via tap → ok\nsettled in 3326 ms · com.android.settings · new "
+      },
+      {
+       "tool": "wait",
+       "args": {
+        "target": ":has-text(\"말하는 속도\")"
+       },
+       "tokens": 7,
+       "chars": 25,
+       "ms": 15.0,
+       "error": null,
+       "reply": "ok x=192 y=1149 elapsed=5"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "s3-search-form",
+   "ok": true,
+   "calls": 5,
+   "tokens": 1299,
+   "tokens_spread": 150,
+   "ms": 13578.0,
+   "runs": [
+    {
+     "name": "s3-search-form",
+     "ok": true,
+     "calls": 5,
+     "tokens": 1153,
+     "chars": 3268,
+     "ms": 12781.0,
+     "steps": [
+      {
+       "tool": "open",
+       "args": {
+        "app": "com.android.settings"
+       },
+       "tokens": 305,
+       "chars": 836,
+       "ms": 4250.0,
+       "error": null,
+       "reply": "ok started=com.android.settings/.Settings result=0\nsettled in 4230 ms · com.android.settings · new screen, 10 rows\n@1   tap  LinearLayout  \"설정 검색\"  #search_acti"
+      },
+      {
+       "tool": "tap",
+       "args": {
+        "target": "설정 검색"
+       },
+       "tokens": 49,
+       "chars": 172,
+       "ms": 1688.0,
+       "error": null,
+       "reply": "tapped \"설정 검색\" cls=android.widget.LinearLayout flags=cfev bounds=[42,84,1038,273] at (540,178) via tap → ok\nno reaction on screen · com.android.settings · no vi"
+      },
+      {
+       "tool": "type",
+       "args": {
+        "text": "배터리"
+       },
+       "tokens": 432,
+       "chars": 1141,
+       "ms": 3328.0,
+       "error": null,
+       "reply": "ok\nsettled in 1685 ms · com.google.android.settings.intelligence · new screen, 14 rows\n@1   tap   ImageButton   \"뒤로\"  63,157\n@2   fill  EditText      \"배터리\"  #op"
+      },
+      {
+       "tool": "tap",
+       "args": {
+        "target": "배터리 사용량"
+       },
+       "tokens": 361,
+       "chars": 1095,
+       "ms": 3515.0,
+       "error": null,
+       "reply": "tapped \"배터리 사용량\" cls=android.widget.LinearLayout flags=cfev bounds=[0,255,1080,483] at (540,369) via tap → ok\nsettled in 2982 ms · com.android.settings · new sc"
+      },
+      {
+       "tool": "wait",
+       "args": {
+        "target": ":has-text(\"마지막 완충 이후\")"
+       },
+       "tokens": 6,
+       "chars": 24,
+       "ms": 0.0,
+       "error": null,
+       "reply": "ok x=550 y=602 elapsed=4"
+      }
+     ]
+    },
+    {
+     "name": "s3-search-form",
+     "ok": true,
+     "calls": 5,
+     "tokens": 1303,
+     "chars": 3720,
+     "ms": 14750.0,
+     "steps": [
+      {
+       "tool": "open",
+       "args": {
+        "app": "com.android.settings"
+       },
+       "tokens": 305,
+       "chars": 836,
+       "ms": 3797.0,
+       "error": null,
+       "reply": "ok started=com.android.settings/.Settings result=0\nsettled in 3740 ms · com.android.settings · new screen, 10 rows\n@1   tap  LinearLayout  \"설정 검색\"  #search_acti"
+      },
+      {
+       "tool": "tap",
+       "args": {
+        "target": "설정 검색"
+       },
+       "tokens": 194,
+       "chars": 608,
+       "ms": 4813.0,
+       "error": null,
+       "reply": "tapped \"설정 검색\" cls=android.widget.LinearLayout flags=cfev bounds=[42,84,1038,273] at (540,178) via tap → ok\nsettled in 4451 ms · com.google.android.settings.int"
+      },
+      {
+       "tool": "type",
+       "args": {
+        "text": "배터리"
+       },
+       "tokens": 437,
+       "chars": 1157,
+       "ms": 2203.0,
+       "error": null,
+       "reply": "ok\nsettled in 1956 ms · com.google.android.settings.intelligence · keyboard open · new screen, 14 rows\n@1   tap   ImageButton   \"뒤로\"  63,157\n@2   fill  EditText"
+      },
+      {
+       "tool": "tap",
+       "args": {
+        "target": "배터리 사용량"
+       },
+       "tokens": 361,
+       "chars": 1095,
+       "ms": 3937.0,
+       "error": null,
+       "reply": "tapped \"배터리 사용량\" cls=android.widget.LinearLayout flags=cfev bounds=[0,255,1080,483] at (540,369) via tap → ok\nsettled in 2731 ms · com.android.settings · new sc"
+      },
+      {
+       "tool": "wait",
+       "args": {
+        "target": ":has-text(\"마지막 완충 이후\")"
+       },
+       "tokens": 6,
+       "chars": 24,
+       "ms": 0.0,
+       "error": null,
+       "reply": "ok x=550 y=602 elapsed=7"
+      }
+     ]
+    },
+    {
+     "name": "s3-search-form",
+     "ok": true,
+     "calls": 5,
+     "tokens": 1299,
+     "chars": 3705,
+     "ms": 13578.0,
+     "steps": [
+      {
+       "tool": "open",
+       "args": {
+        "app": "com.android.settings"
+       },
+       "tokens": 305,
+       "chars": 836,
+       "ms": 4375.0,
+       "error": null,
+       "reply": "ok started=com.android.settings/.Settings result=0\nsettled in 4355 ms · com.android.settings · new screen, 10 rows\n@1   tap  LinearLayout  \"설정 검색\"  #search_acti"
+      },
+      {
+       "tool": "tap",
+       "args": {
+        "target": "설정 검색"
+       },
+       "tokens": 189,
+       "chars": 592,
+       "ms": 3375.0,
+       "error": null,
+       "reply": "tapped \"설정 검색\" cls=android.widget.LinearLayout flags=cfev bounds=[42,84,1038,273] at (540,178) via tap → ok\nsettled in 3058 ms · com.google.android.settings.int"
+      },
+      {
+       "tool": "type",
+       "args": {
+        "text": "배터리"
+       },
+       "tokens": 437,
+       "chars": 1157,
+       "ms": 2312.0,
+       "error": null,
+       "reply": "ok\nsettled in 1589 ms · com.google.android.settings.intelligence · keyboard open · new screen, 14 rows\n@1   tap   ImageButton   \"뒤로\"  63,157\n@2   fill  EditText"
+      },
+      {
+       "tool": "tap",
+       "args": {
+        "target": "배터리 사용량"
+       },
+       "tokens": 361,
+       "chars": 1095,
+       "ms": 3500.0,
+       "error": null,
+       "reply": "tapped \"배터리 사용량\" cls=android.widget.LinearLayout flags=cfev bounds=[0,255,1080,483] at (540,369) via tap → ok\nsettled in 2799 ms · com.android.settings · new sc"
+      },
+      {
+       "tool": "wait",
+       "args": {
+        "target": ":has-text(\"마지막 완충 이후\")"
+       },
+       "tokens": 7,
+       "chars": 25,
+       "ms": 16.0,
+       "error": null,
+       "reply": "ok x=550 y=602 elapsed=13"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "s4-permission-popup",
+   "ok": true,
+   "calls": 5,
+   "tokens": 318,
+   "tokens_spread": 114,
+   "ms": 12875.0,
+   "runs": [
+    {
+     "name": "s4-permission-popup",
+     "ok": true,
+     "calls": 5,
+     "tokens": 272,
+     "chars": 890,
+     "ms": 13235.0,
+     "steps": [
+      {
+       "tool": "open",
+       "args": {
+        "app": "com.android.camera2"
+       },
+       "tokens": 114,
+       "chars": 330,
+       "ms": 3500.0,
+       "error": null,
+       "reply": "ok started=com.android.camera2/com.android.camera.CameraLauncher result=0\nsettled in 3484 ms · com.android.camera2 · new screen, 3 rows\n@1  -    TextView  \"사진 위"
+      },
+      {
+       "tool": "tap",
+       "args": {
+        "target": ":has-text(\"다음\")"
+       },
+       "tokens": 92,
+       "chars": 332,
+       "ms": 2297.0,
+       "error": null,
+       "reply": "tapped \"다음\" cls=android.widget.Button flags=cfev bounds=[351,2227,729,2353] at (540,2290) via click → ok\nsettled in 2211 ms · com.android.camera2 · new screen, "
+      },
+      {
+       "tool": "wait",
+       "args": {
+        "target": "#permission_allow_foreground_only_button"
+       },
+       "tokens": 7,
+       "chars": 27,
+       "ms": 969.0,
+       "error": null,
+       "reply": "ok x=540 y=1418 elapsed=967"
+      },
+      {
+       "tool": "tap",
+       "args": {
+        "target": "#permission_allow_foreground_only_button"
+       },
+       "tokens": 52,
+       "chars": 174,
+       "ms": 6078.0,
+       "error": null,
+       "reply": "tapped \"앱 사용 중에만 허용\" cls=android.widget.Button flags=cfev bounds=[133,1345,947,1492] at (540,1418) via click → ok\nsettled in 6062 ms · com.android.camera2 · no "
+      },
+      {
+       "tool": "wait",
+       "args": {
+        "target": "#shutter_button"
+       },
+       "tokens": 7,
+       "chars": 27,
+       "ms": 391.0,
+       "error": null,
+       "reply": "ok x=540 y=2242 elapsed=392"
+      }
+     ]
+    },
+    {
+     "name": "s4-permission-popup",
+     "ok": true,
+     "calls": 5,
+     "tokens": 386,
+     "chars": 1262,
+     "ms": 12844.0,
+     "steps": [
+      {
+       "tool": "open",
+       "args": {
+        "app": "com.android.camera2"
+       },
+       "tokens": 114,
+       "chars": 330,
+       "ms": 3766.0,
+       "error": null,
+       "reply": "ok started=com.android.camera2/com.android.camera.CameraLauncher result=0\nsettled in 3740 ms · com.android.camera2 · new screen, 3 rows\n@1  -    TextView  \"사진 위"
+      },
+      {
+       "tool": "tap",
+       "args": {
+        "target": ":has-text(\"다음\")"
+       },
+       "tokens": 92,
+       "chars": 332,
+       "ms": 2187.0,
+       "error": null,
+       "reply": "tapped \"다음\" cls=android.widget.Button flags=cfev bounds=[351,2227,729,2353] at (540,2290) via click → ok\nsettled in 2042 ms · com.android.camera2 · new screen, "
+      },
+      {
+       "tool": "wait",
+       "args": {
+        "target": "#permission_allow_foreground_only_button"
+       },
+       "tokens": 7,
+       "chars": 28,
+       "ms": 1204.0,
+       "error": null,
+       "reply": "ok x=540 y=1418 elapsed=1203"
+      },
+      {
+       "tool": "tap",
+       "args": {
+        "target": "#permission_allow_foreground_only_button"
+       },
+       "tokens": 166,
+       "chars": 544,
+       "ms": 3406.0,
+       "error": null,
+       "reply": "tapped \"앱 사용 중에만 허용\" cls=android.widget.Button flags=cfev bounds=[133,1345,947,1492] at (540,1418) via click → ok\nsettled in 3372 ms · com.android.camera2 · new"
+      },
+      {
+       "tool": "wait",
+       "args": {
+        "target": "#shutter_button"
+       },
+       "tokens": 7,
+       "chars": 28,
+       "ms": 2281.0,
+       "error": null,
+       "reply": "ok x=540 y=2242 elapsed=2289"
+      }
+     ]
+    },
+    {
+     "name": "s4-permission-popup",
+     "ok": true,
+     "calls": 5,
+     "tokens": 318,
+     "chars": 1058,
+     "ms": 12875.0,
+     "steps": [
+      {
+       "tool": "open",
+       "args": {
+        "app": "com.android.camera2"
+       },
+       "tokens": 114,
+       "chars": 330,
+       "ms": 3687.0,
+       "error": null,
+       "reply": "ok started=com.android.camera2/com.android.camera.CameraLauncher result=0\nsettled in 3677 ms · com.android.camera2 · new screen, 3 rows\n@1  -    TextView  \"사진 위"
+      },
+      {
+       "tool": "tap",
+       "args": {
+        "target": ":has-text(\"다음\")"
+       },
+       "tokens": 92,
+       "chars": 332,
+       "ms": 1625.0,
+       "error": null,
+       "reply": "tapped \"다음\" cls=android.widget.Button flags=cfev bounds=[351,2227,729,2353] at (540,2290) via click → ok\nsettled in 1495 ms · com.android.camera2 · new screen, "
+      },
+      {
+       "tool": "wait",
+       "args": {
+        "target": "#permission_allow_foreground_only_button"
+       },
+       "tokens": 7,
+       "chars": 28,
+       "ms": 1547.0,
+       "error": null,
+       "reply": "ok x=540 y=1418 elapsed=1542"
+      },
+      {
+       "tool": "tap",
+       "args": {
+        "target": "#permission_allow_foreground_only_button"
+       },
+       "tokens": 98,
+       "chars": 341,
+       "ms": 5297.0,
+       "error": null,
+       "reply": "tapped \"앱 사용 중에만 허용\" cls=android.widget.Button flags=cfev bounds=[133,1345,947,1492] at (540,1418) via click → ok\nsettled in 5231 ms · com.android.camera2 · new"
+      },
+      {
+       "tool": "wait",
+       "args": {
+        "target": "#shutter_button"
+       },
+       "tokens": 7,
+       "chars": 27,
+       "ms": 719.0,
+       "error": null,
+       "reply": "ok x=540 y=2242 elapsed=725"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "s5-heavy-screen",
+   "ok": true,
+   "calls": 2,
+   "tokens": 249,
+   "tokens_spread": 0,
+   "ms": 1828.0,
+   "runs": [
+    {
+     "name": "s5-heavy-screen",
+     "ok": true,
+     "calls": 2,
+     "tokens": 249,
+     "chars": 894,
+     "ms": 1938.0,
+     "steps": [
+      {
+       "tool": "go",
+       "args": {
+        "key": "recents"
+       },
+       "tokens": 129,
+       "chars": 465,
+       "ms": 1922.0,
+       "error": null,
+       "reply": "ok\nsettled in 1491 ms · com.google.android.apps.nexuslauncher · new screen, 6 rows\n@17  tap  FrameLayout  \"카메라\"  #task_view_single  65,1073  [item=0,8]\n@18  tap"
+      },
+      {
+       "tool": "ui",
+       "args": {},
+       "tokens": 120,
+       "chars": 429,
+       "ms": 16.0,
+       "error": null,
+       "reply": "com.google.android.apps.nexuslauncher · 6 rows\n@17  tap  FrameLayout  \"카메라\"  #task_view_single  65,1073  [item=0,8]\n@18  tap  FrameLayout  \"설정\"  #task_view_sing"
+      }
+     ]
+    },
+    {
+     "name": "s5-heavy-screen",
+     "ok": true,
+     "calls": 2,
+     "tokens": 249,
+     "chars": 894,
+     "ms": 1531.0,
+     "steps": [
+      {
+       "tool": "go",
+       "args": {
+        "key": "recents"
+       },
+       "tokens": 129,
+       "chars": 465,
+       "ms": 1516.0,
+       "error": null,
+       "reply": "ok\nsettled in 1024 ms · com.google.android.apps.nexuslauncher · new screen, 6 rows\n@17  tap  FrameLayout  \"카메라\"  #task_view_single  65,1073  [item=0,8]\n@18  tap"
+      },
+      {
+       "tool": "ui",
+       "args": {},
+       "tokens": 120,
+       "chars": 429,
+       "ms": 15.0,
+       "error": null,
+       "reply": "com.google.android.apps.nexuslauncher · 6 rows\n@17  tap  FrameLayout  \"카메라\"  #task_view_single  65,1073  [item=0,8]\n@18  tap  FrameLayout  \"설정\"  #task_view_sing"
+      }
+     ]
+    },
+    {
+     "name": "s5-heavy-screen",
+     "ok": true,
+     "calls": 2,
+     "tokens": 249,
+     "chars": 894,
+     "ms": 1828.0,
+     "steps": [
+      {
+       "tool": "go",
+       "args": {
+        "key": "recents"
+       },
+       "tokens": 129,
+       "chars": 465,
+       "ms": 1734.0,
+       "error": null,
+       "reply": "ok\nsettled in 1217 ms · com.google.android.apps.nexuslauncher · new screen, 6 rows\n@17  tap  FrameLayout  \"카메라\"  #task_view_single  65,1073  [item=0,8]\n@18  tap"
+      },
+      {
+       "tool": "ui",
+       "args": {},
+       "tokens": 120,
+       "chars": 429,
+       "ms": 94.0,
+       "error": null,
+       "reply": "com.google.android.apps.nexuslauncher · 6 rows\n@17  tap  FrameLayout  \"카메라\"  #task_view_single  65,1073  [item=0,8]\n@18  tap  FrameLayout  \"설정\"  #task_view_sing"
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

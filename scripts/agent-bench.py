@@ -115,17 +115,19 @@ def run_scenario(client, scenario, adb=None):
     for s in scenario.get("steps", []) + [scenario["check"]]:
         text, err, ms = client.call(s["tool"], s.get("args", {}))
         steps.append({"tool": s["tool"], "args": s.get("args", {}), "tokens": approx_tokens(text), "chars": len(text),
-                      "ms": round(ms, 1), "error": text[:200] if err else None})
+                      "ms": round(ms, 1), "error": text[:200] if err else None,
+                      "reply": text[:160]})
     return {"name": scenario["name"], "ok": all(s["error"] is None for s in steps), "calls": len(steps),
             "tokens": sum(s["tokens"] for s in steps), "chars": sum(s["chars"] for s in steps),
             "ms": round(sum(s["ms"] for s in steps), 1), "steps": steps}
 
 
 def summarize(runs):
-    """Several runs of one scenario → one row (time is the median)."""
+    """Several runs of one scenario → one row. Tokens and time are medians:
+    action replies report what changed on screen, which depends on timing."""
     first = runs[0]
     return {"name": first["name"], "ok": all(r["ok"] for r in runs), "calls": first["calls"],
-            "tokens": first["tokens"], "tokens_spread": max(r["tokens"] for r in runs) - min(r["tokens"] for r in runs),
+            "tokens": round(statistics.median(r["tokens"] for r in runs)), "tokens_spread": max(r["tokens"] for r in runs) - min(r["tokens"] for r in runs),
             "ms": round(statistics.median(r["ms"] for r in runs), 1), "runs": runs}
 
 

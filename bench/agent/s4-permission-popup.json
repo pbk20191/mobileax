@@ -62,9 +62,9 @@
   }
  ],
  "check": {
-  "tool": "find",
+  "tool": "wait",
   "args": {
-   "selector": "#shutter_button"
+   "target": "#shutter_button"
   }
  }
 }

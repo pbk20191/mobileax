@@ -54,3 +54,58 @@ debug/export path, not an interaction loop path.
 | `adb shell settings get system screen_brightness` | 45.33 ms | 57.92 ms | 4 |
 | `adb shell dumpsys window` | 71.28 ms | 107.80 ms | 87667 |
 | `adb exec-out screencap -p` | 2105.61 ms | 2308.38 ms | 2024218 |
+
+## Agent Token/Turn Benchmark
+
+What an agent pays per task over MCP (`mobax mcp`): calls and approximate
+response tokens. `scripts/agent-bench.py` replays the fixed tool-call
+sequences in `bench/agent/*.json` (the fewest calls today's tools need, then
+a check). No LLM runs, so it is free and repeatable. Spec:
+`docs/superpowers/specs/2026-11-04-agent-first-direction.md`.
+
+- **Approximate tokens** = ASCII chars / 4 (rounded up) + one per non-ASCII
+  char. A fixed yardstick for comparing runs, not a tokenizer; changing it
+  means re-recording the baseline.
+- `setup` steps are not counted. They may call host adb (`{"adb": [...]}`),
+  since MCP has no device shell.
+- Tokens and time are medians over runs. Action replies report what changed
+  on screen, which depends on timing, so tokens vary a little from run to run.
+- **Stable means:** calls identical, total tokens within ±5%. Per-scenario
+  tokens are reported, but s4 (camera start-up after the permission tap) can
+  move by ~20% on its own.
+
+```
+ANDROID_HOME=… python -I scripts/agent-bench.py --runs 3 --compare bench/agent/baseline.json
+```
+
+Baseline (2026-11-04, emulator `Medium_Phone`, SDK 36, ko-KR, 3 runs;
+`bench/agent/baseline.json`). Times are from a loaded emulator (about twice
+the unloaded figures); compare time only within one session:
+
+| Scenario | Calls | Tokens (p50) | ± (max−min) | Time (p50) |
+|---|---:|---:|---:|---:|
+| s1-settings-item | 3 | 818 | 1 | 7.8 s |
+| s2-long-list | 8 | 1870 | 388 | 17.6 s |
+| s3-search-form | 5 | 1299 | 150 | 13.6 s |
+| s4-permission-popup | 5 | 318 | 114 | 12.9 s |
+| s5-heavy-screen | 2 | 249 | 0 | 1.8 s |
+| **total** | **23** | **4554** | | |
+| `tools/list` (once per session) | | 2668 | | |
+
+| Scenario | Task | Measures |
+|---|---|---|
+| s1 | Settings → "디스플레이 및 터치" | basic navigation |
+| s2 | Accessibility list, 4 swipes to the end, last item | scrolling (later: find-with-scroll) |
+| s3 | Settings search "배터리" → result | typing, result check |
+| s4 | Fresh camera: location-tag prompt, location permission | popups (later: auto-handling) |
+| s5 | Recents, one `ui` | output size of a heavy screen |
+
+Findings from writing the scenarios:
+
+- A bare-word target (`다음`, `Gmail`) is read as a class-name selector and
+  misses; scenarios use `:has-text("…")`.
+- The tool list (2668, every session) is more than half of all five scenarios'
+  replies together (4554): the cheapest cut is in tool descriptions.
+- Settings search is its own package (`com.google.android.settings.intelligence`).
+- `wait` returning at once while a page is still settling makes the first
+  swipe land at a slightly different scroll position each run.

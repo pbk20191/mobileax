@@ -64,9 +64,9 @@
   }
  ],
  "check": {
-  "tool": "find",
+  "tool": "wait",
   "args": {
-   "selector": ":has-text(\"말하는 속도\")"
+   "target": ":has-text(\"말하는 속도\")"
   }
  }
 }

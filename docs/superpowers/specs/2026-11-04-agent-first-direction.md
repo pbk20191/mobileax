@@ -46,6 +46,7 @@
 - **W3C 세션·요소 ID 모델:** 응답이 장황하고 왕복이 많다.
 - **XPath:** 셀렉터가 길어지고 엔진이 무겁다.
 - **동작 이력·예약 동작.**
+- **`androidx.test.uiautomator:uiautomator-shell`(2.4.0)의 shell 서버.** 네이티브 바이너리를 shell uid로 띄우고 stdin/stdout/stderr를 TCP 포트 3개로 나눠 준다. 인증이 없어 데몬이 사는 동안 INTERNET 권한이 있는 앱 누구나 shell 권한을 얻는다. exit code도 주지 않는다. 현행 `Shell`을 유지한다(2026-11-04 결정). `permission().revoke`, `clearAppData` 같은 도우미는 빌트인 설계 때 참고한다.
 
 ## 실행 방식
 
