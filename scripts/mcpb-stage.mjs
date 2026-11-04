@@ -4,10 +4,11 @@
 //   <out>/manifest.json   mcpb/manifest.json with version and platform set
 //   <out>/server/mobax[.exe] the CLI, run as `mobax mcp`
 //   <out>/server/mobax.jar   the on-device daemon (mobax finds it next to itself)
+//   <out>/server/mobaxd.apk  its instrumentation build, preferred where it installs (--apk, optional)
 //   <out>/LICENSE, README.md
 //
 // usage: node scripts/mcpb-stage.mjs --version v1.2.3 --platform darwin|win32|linux \
-//          --cli path/to/mobax[.exe] --jar build/mobax.jar --out dist/mcpb
+//          --cli path/to/mobax[.exe] --jar build/mobax.jar [--apk build/mobaxd.apk] --out dist/mcpb
 import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync, chmodSync, existsSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -41,6 +42,7 @@ const mobax = join(args.out, "server", basename(args.cli));
 copyFileSync(args.cli, mobax);
 if (args.platform !== "win32") chmodSync(mobax, 0o755);
 copyFileSync(args.jar, join(args.out, "server", "mobax.jar"));
+if (args.apk) copyFileSync(args.apk, join(args.out, "server", "mobaxd.apk"));
 for (const f of ["LICENSE", "README.md"]) {
   if (existsSync(join(root, f))) copyFileSync(join(root, f), join(args.out, f));
 }
