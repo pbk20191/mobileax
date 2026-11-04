@@ -149,7 +149,7 @@ internal class Dispatch(
     private companion object {
         val PONG = "pong".toByteArray()
         val BYE = "bye".toByteArray()
-        val GESTURES = setOf("tap", "swipe", "down", "move", "up", "scroll", "key", "text", "swipe_dir",
+        val GESTURES = setOf("tap", "swipe", "down", "move", "up", "scroll", "key", "text", "swipe_dir", "pinch",
             "wait_for_idle", "event_seq", "settle", "settle_dump", "wait_for_text", "wait_for_activity", "tap_and_dump", "tap_and_settle")
         /** Cheap, bounded calls answered straight from the looper. */
         val ON_MAIN = setOf("info", "getprop", "toasts")

@@ -52,6 +52,7 @@ by default because it shells out to `dumpsys window`.
 tap         x=NUM y=NUM
 swipe       x1=NUM y1=NUM x2=NUM y2=NUM [dur=MS]
 swipe_dir   left|right|up|down [dur=MS]                  60% travel from screen centre
+pinch       in|out [x=NUM y=NUM] [span=PX] [dur=MS]      two fingers together (in) or apart (out)
 down        x=NUM y=NUM                                  pointer down (sticks)
 move        x=NUM y=NUM
 up          x=NUM y=NUM                                  releases the down pointer

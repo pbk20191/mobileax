@@ -956,8 +956,8 @@ fn build_tools() -> Vec<Tool> {
         },
         Tool {
             name: "swipe",
-            description: "Swipe the finger this way (up scrolls content down).",
-            schema: obj(&[r#""direction":{"type":"string","enum":["up","down","left","right"]}"#, r#""duration_ms":{"type":"integer"}"#, OBSERVE, DEVICE], &["direction"]),
+            description: "Swipe the finger this way (up scrolls content down), or pinch two fingers `out` (zoom in) or `in` around x,y (default: centre).",
+            schema: obj(&[r#""direction":{"type":"string","enum":["up","down","left","right"]}"#, r#""pinch":{"type":"string","enum":["in","out"]}"#, r#""x":{"type":"integer"}"#, r#""y":{"type":"integer"}"#, r#""duration_ms":{"type":"integer"}"#, OBSERVE, DEVICE], &[]),
         },
         Tool {
             name: "go",
@@ -1187,8 +1187,17 @@ fn call_tool(name: &str, args: &Value, engine: &Engine, device: Option<&str>, br
             Via::Act
         }
         "swipe" => {
-            argv.extend(["swipe".into(), need("direction")?]);
-            argv.extend(n("duration_ms").map(|d| d.to_string()));
+            match (s("pinch"), s("direction")) {
+                (Some(p), _) => {
+                    let wire = pinch_wire(&p, n("x"), n("y")).map_err(|e| (-32602, e))?;
+                    argv.extend(["do".into(), wire]);
+                }
+                (None, Some(d)) => {
+                    argv.extend(["swipe".into(), d]);
+                    argv.extend(n("duration_ms").map(|d| d.to_string()));
+                }
+                (None, None) => return Err((-32602, "swipe: give \"direction\" or \"pinch\"".into())),
+            }
             Via::Act
         }
         "go" => {
@@ -1383,6 +1392,18 @@ const TAP_WAIT_CAP_MS: u64 = 4000;
 /// settled (or never stopped within the cap), so the target may be there now.
 fn moved_then_settled(reply: &str) -> bool {
     reply.contains("changed=1") || reply.contains("TIMEOUT:settle")
+}
+
+/// The daemon's two-finger `pinch` for `swipe {pinch, x?, y?}`.
+fn pinch_wire(dir: &str, x: Option<i64>, y: Option<i64>) -> Result<String, String> {
+    if dir != "in" && dir != "out" {
+        return Err(format!("swipe: pinch is \"in\" or \"out\", not {dir:?}"));
+    }
+    let mut w = format!("pinch {dir}");
+    if let (Some(x), Some(y)) = (x, y) {
+        w.push_str(&format!(" x={x} y={y}"));
+    }
+    Ok(w)
 }
 
 /// A node's screen rectangle: left, top, right, bottom.
@@ -1890,6 +1911,17 @@ mod tests {
     fn screenshot_takes_a_target() {
         let shot = super::tools().iter().find(|t| t.name == "screenshot").unwrap();
         assert!(shot.schema.contains(r#""target""#));
+    }
+
+    #[test]
+    fn swipe_takes_a_direction_or_a_pinch() {
+        let swipe = super::tools().iter().find(|t| t.name == "swipe").unwrap();
+        assert!(swipe.schema.contains(r#""pinch""#));
+        let r = handle(r#"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"swipe","arguments":{}}}"#, &Engine::new(&[])).unwrap();
+        assert!(r.contains("-32602") && r.contains("pinch"), "{r}");
+        assert_eq!(pinch_wire("out", Some(540), Some(1200)).as_deref(), Ok("pinch out x=540 y=1200"));
+        assert_eq!(pinch_wire("in", None, None).as_deref(), Ok("pinch in"));
+        assert!(pinch_wire("sideways", None, None).is_err());
     }
 
     #[test]

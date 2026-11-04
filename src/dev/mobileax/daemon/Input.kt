@@ -250,6 +250,22 @@ internal class Input(private val ua: UiAutomation) {
         }
     }
 
+    /** [motion] with one finger per entry of [xs]/[ys] (pointer ids 0, 1, …). */
+    fun multiMotion(downTime: Long, eventTime: Long, action: Int, xs: IntArray, ys: IntArray, sync: Boolean = true) {
+        val n = xs.size
+        val props = Array(n) { i -> PointerProperties().apply { id = i; toolType = MotionEvent.TOOL_TYPE_FINGER } }
+        val coords = Array(n) { i -> PointerCoords().apply { x = xs[i].toFloat(); y = ys[i].toFloat(); pressure = 1.0f; size = 1.0f } }
+        val ev = MotionEvent.obtain(
+            downTime, eventTime, action, n, props, coords,
+            0, 0, 1.0f, 1.0f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0
+        )
+        try {
+            inject(ev, sync)
+        } finally {
+            ev.recycle()
+        }
+    }
+
     /**
      * `sync` waits until the window has handled the event. Not waiting goes
      * further: the 2-argument `injectInputEvent` also waits for the window

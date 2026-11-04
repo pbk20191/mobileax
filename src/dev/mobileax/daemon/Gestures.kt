@@ -22,6 +22,7 @@ internal class Gestures(private val h: Server.Handlers) {
     suspend fun handle(head: String, cmd: String): ByteArray? = when (head) {
         "tap", "swipe", "down", "move", "up", "scroll", "key", "text" -> input(head, cmd)
         "swipe_dir" -> swipeDir(cmd)
+        "pinch" -> pinch(cmd)
         "wait_for_idle" -> waitForIdle(cmd)
         "event_seq" -> utf8("seq=${waits.seq}")
         "settle" -> settle(cmd)
@@ -51,6 +52,45 @@ internal class Gestures(private val h: Server.Handlers) {
      * time; the last MOVE lands on the endpoint and UP shares its time.
      */
     /** [sync]: each event waits until the window has handled it (see [Input.motion]). */
+    /**
+     * `pinch in|out [x=N y=N] [span=PX] [dur=MS]`: two fingers on a level
+     * line through x,y (default: the screen's centre) move apart (`out`,
+     * zoom in) or together (`in`), between a fifth of `span` and all of it
+     * (default 40% of the short side).
+     */
+    private suspend fun pinch(cmd: String): ByteArray {
+        val dir = Server.positional(cmd) ?: return Server.errBytes("BAD_ARG:pinch-needs-in-or-out")
+        if (dir != "in" && dir != "out") return Server.errBytes("BAD_ARG:pinch-needs-in-or-out")
+        val sz = h.shot.sourceSize()
+        if (sz.x <= 0 || sz.y <= 0) return Server.errBytes("pinch-no-display-size")
+        val cx = Server.longArg(cmd, "x", (sz.x / 2).toLong()).toInt()
+        val cy = Server.longArg(cmd, "y", (sz.y / 2).toLong()).toInt()
+        val span = Server.longArg(cmd, "span", (minOf(sz.x, sz.y) * 0.4).toLong()).toInt().coerceAtLeast(20)
+        val durMs = Server.longArg(cmd, "dur", 500).toInt().coerceAtLeast(50)
+        val (from, to) = if (dir == "out") span / 5 to span else span to span / 5
+        fun at(gap: Int) = intArrayOf(cx - gap / 2, cx + gap / 2) to intArrayOf(cy, cy)
+        val shift = MotionEvent.ACTION_POINTER_INDEX_SHIFT
+        val t0 = SystemClock.uptimeMillis()
+        val (sx, sy) = at(from)
+        withContext(Loop.Work) {
+            h.input.motion(t0, t0, MotionEvent.ACTION_DOWN, sx[0], sy[0])
+            h.input.multiMotion(t0, t0, MotionEvent.ACTION_POINTER_DOWN or (1 shl shift), sx, sy)
+        }
+        var now: Long
+        var last = at(from)
+        do {
+            now = maxOf(Frames.next(), t0 + 1)
+            val f = minOf(1f, (now - t0).toFloat() / durMs)
+            last = at((from + (to - from) * f).roundToInt())
+            withContext(Loop.Work) { h.input.multiMotion(t0, now, MotionEvent.ACTION_MOVE, last.first, last.second) }
+        } while (now - t0 < durMs)
+        withContext(Loop.Work) {
+            h.input.multiMotion(t0, now, MotionEvent.ACTION_POINTER_UP or (1 shl shift), last.first, last.second)
+            h.input.motion(t0, now, MotionEvent.ACTION_UP, last.first[0], last.second[0])
+        }
+        return utf8("ok pinch=$dir x=$cx y=$cy span=$span dur=$durMs")
+    }
+
     suspend fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durMs0: Int, sync: Boolean = true) {
         val durMs = if (durMs0 <= 0) 500 else durMs0
         val t0 = SystemClock.uptimeMillis()
