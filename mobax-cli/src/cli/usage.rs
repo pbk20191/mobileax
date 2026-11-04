@@ -28,6 +28,8 @@ Selectors (CSS-like, Playwright-inspired):
   mobax find '[text=\"sign in\" i]'           case-insensitive (any operator)
   mobax find '[text=/sign\\s*in/i]'           regex search; also :text-matches(\"re\", \"i\")
   mobax find 'LinearLayout:has(TextView[text=Wi-Fi])'   the row holding it (innermost)
+  mobax tap 'by:res=title text~=Wi-Fi'      UiAutomator By, matched live on the device
+                                             (tap/find/wait; see docs/wire.md)
   Pseudos: :visible :clickable :enabled :focused :checkable :checked
            :editable :heading :has-text(\"x\") :text-is(\"x\") :text-matches(\"re\")
            :in(SEL) :has(SEL) :below(SEL) :right-of(SEL) :near(SEL, PX)

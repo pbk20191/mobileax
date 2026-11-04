@@ -139,10 +139,13 @@ pub(crate) fn run_wait(
             json_out::Obj::new().n("slept_ms", ms as i64));
     }
     let timeout_ms = f.timeout_ms.unwrap_or(10_000);
-    if let Some(sels) = css_selector(spec) {
+    let by = spec.starts_with("by:");
+    if let Some(sels) = css_selector(spec).filter(|_| !by) {
         return run_wait_selector(conn, &reporter, spec, &sels, f, timeout_ms);
     }
-    let wire: String = if let Some(rest) = spec.strip_prefix("idle") {
+    let wire: String = if by {
+        format!("by_wait timeout_ms={timeout_ms} q={spec}")
+    } else if let Some(rest) = spec.strip_prefix("idle") {
         let rest = rest.trim();
         let idle_ms = if rest.is_empty() {
             200
@@ -234,12 +237,18 @@ pub(crate) fn run_find(
     f: &flags::ActionFlags,
 ) -> io::Result<()> {
     let reporter = output::Reporter::new(f.out(out_fmt));
-    let selectors = match selector::Selector::parse(sel) {
-        Ok(s) => s,
-        Err(e) => return Err(reporter.fail("find",
-            errors::ErrInfo::new(errors::ErrCode::BadArg, e))),
+    // `by:` runs UiAutomator's By on the device, live; anything else matches
+    // a dump here.
+    let by = sel.starts_with("by:");
+    let selectors = if by { Vec::new() } else {
+        match selector::Selector::parse(sel) {
+            Ok(s) => s,
+            Err(e) => return Err(reporter.fail("find",
+                errors::ErrInfo::new(errors::ErrCode::BadArg, e))),
+        }
     };
-    let body = conn.call(f.dump_wire())?;
+    let wire = if by { format!("by_find q={sel}") } else { f.dump_wire().to_string() };
+    let body = conn.call(&wire)?;
     if let Some(e) = errors::parse_err(&body) {
         return Err(reporter.fail("find", e));
     }
@@ -247,9 +256,13 @@ pub(crate) fn run_find(
         .map_err(|e| io::Error::other(format!("dump not utf-8: {e}")))?;
     let json = json::parse(text)
         .map_err(|e| io::Error::other(format!("dump not json: {e}")))?;
-    // App windows, topmost first — the order `mobax tap` prefers.
-    let ctx = selector::MatchCtx::from_roots(json::app_roots(&json).into_iter().rev().collect());
-    let mut matches = selector::find_all_with(&ctx, &selectors);
+    let mut matches = if by {
+        json::obj_get(&json, "nodes").and_then(json::as_arr).map(|a| a.iter().collect()).unwrap_or_default()
+    } else {
+        // App windows, topmost first — the order `mobax tap` prefers.
+        let ctx = selector::MatchCtx::from_roots(json::app_roots(&json).into_iter().rev().collect());
+        selector::find_all_with(&ctx, &selectors)
+    };
     selector::apply_filters(&mut matches, f.require());
 
     if matches.is_empty() {

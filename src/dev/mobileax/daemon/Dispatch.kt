@@ -71,7 +71,10 @@ internal class Dispatch(
                         ?: Server.errBytes("pm_uninstall-needs-pkg"))
                     in GESTURES -> c.send(gestures(s).handle(head, cmd)!!)
                     in ON_MAIN -> c.send(s.respond(head, cmd) ?: unknown(head))
-                    else -> c.send(withContext(Loop.Work) { s.respond(head, cmd) } ?: unknown(head))
+                    // by_* wait and inject gestures synchronously: off the bounded Work pool.
+                    else -> c.send(withContext(if (head.startsWith("by_")) Loop.Blocking else Loop.Work) {
+                        s.respond(head, cmd)
+                    } ?: unknown(head))
                 }
             }
         } catch (_: IOException) {

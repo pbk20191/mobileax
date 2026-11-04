@@ -55,6 +55,9 @@ pub fn run_session(
     verb: &'static str,
 ) -> io::Result<()> {
     let flags = sess.defaults.clone();
+    if query.starts_with("by:") {
+        return tap_by(sess, query, reporter, verb, &flags);
+    }
     let total = flags.total_attempts();
     let mut last_err: Option<ErrInfo> = None;
     let mut scrolls = 0;
@@ -636,4 +639,30 @@ mod tests {
         assert_eq!(hits[0].text, "闲鱼");
         assert_eq!(hits[0].bounds, (400, 1500, 600, 1700));
     }
+}
+
+/// `tap by:QUERY`: the device finds the node with UiAutomator's By, live,
+/// and clicks it (waiting up to --timeout for it to show).
+fn tap_by(
+    sess: &mut Session,
+    query: &str,
+    reporter: &Reporter,
+    verb: &'static str,
+    flags: &crate::flags::ActionFlags,
+) -> io::Result<()> {
+    let mut wire = String::from("by_tap");
+    if let Some(t) = flags.timeout_ms {
+        wire.push_str(&format!(" timeout_ms={t}"));
+    }
+    if let Some(n) = flags.nth {
+        wire.push_str(&format!(" nth={n}"));
+    }
+    wire.push_str(&format!(" q={query}"));
+    let body = sess.conn.call(&wire)?;
+    sess.invalidate_dump();
+    if let Some(e) = parse_err(&body) {
+        return Err(reporter.fail(verb, e));
+    }
+    reporter.ok(verb, String::from_utf8_lossy(&body).trim_end(),
+        crate::json_out::Obj::new().s("query", query))
 }

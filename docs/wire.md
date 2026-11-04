@@ -144,6 +144,32 @@ submit           [<selector>]                  ACTION_IME_ENTER on focused
                                                (Search / Go / Send / Done / …)
 ```
 
+## By queries — UiAutomator, live
+
+`by:` queries run UiAutomator's `By` (`ByEngine`) against the live tree,
+visible nodes only. Options come first; `q=` takes the rest of the line.
+The CLI and MCP route any target or selector starting `by:` here.
+
+```
+by_find q=by:QUERY                                  → {"nodes":[…]} (dump node fields)
+by_wait [timeout_ms=N] [gone=1] q=by:QUERY          → ok x= y= elapsed= | ERR:TIMEOUT
+by_tap [timeout_ms=N] [nth=N] [long=1] [new_window_ms=N] q=by:QUERY
+                                                    → ok x= y= [new_window=true|false]
+by_swipe dir=up|down|left|right [pct=0.8] [fling=1] [nth=N] q=by:QUERY
+                                                    → ok scroll|swipe|fling [end]
+by_pinch in|out [pct=0.8] [nth=N] q=by:QUERY        → ok pinch in|out
+by_drag to=X,Y [speed=N] [nth=N] q=by:QUERY         → ok drag X,Y -> X,Y
+```
+
+QUERY: space-separated terms, all of which hold. `text=V` (also `~=`
+contains, `^=`, `$=`, `=/re/i`) for text, desc, hint, res, class, pkg;
+`res=title` and `class=Button` match any package's. Flags `clickable`,
+`checked`, `!enabled`, …; `has(Q)` `child(Q)` `parent(Q)` `in(Q)`;
+`depth=N`; `window(pkg=… title~=… type=app|ime|system|overlay active
+focused display=N)`. A value with spaces goes in `"quotes"`. `dir` on
+`by_swipe` is the finger's: a scrollable element scrolls (the content moves
+the other way) and says `end` when nothing is left.
+
 ## Packages
 
 ```

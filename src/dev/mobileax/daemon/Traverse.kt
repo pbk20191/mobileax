@@ -48,6 +48,9 @@ object Traverse {
         }
     }
 
+    /** One node's fields, in an object left open (the caller closes it). */
+    fun writeFieldsOnly(n: AccessibilityNodeInfo, out: JsonOut) = writeFields(n, out)
+
     /** Opens the node's object and writes its own fields (not children). */
     private fun writeFields(n: AccessibilityNodeInfo, out: JsonOut) {
         out.beginObj()

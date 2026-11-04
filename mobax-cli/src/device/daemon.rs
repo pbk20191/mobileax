@@ -694,7 +694,9 @@ fn resolve_serial(explicit: Option<&str>) -> io::Result<String> {
         })
         .collect();
     match found.len() {
-        0 => Err(io::Error::other("no devices in 'device' state — check `adb devices`")),
+        // Only an agent with no device reads this: the emulator hint costs nothing elsewhere.
+        0 => Err(io::Error::other("no devices in 'device' state — check `adb devices`, or start an \
+            emulator on the host: `android emulator start NAME` (give the AVD hw.gpu.mode=host)")),
         1 => Ok(found.remove(0)),
         _ => Err(io::Error::other(format!(
             "multiple devices attached ({}); pass --device SERIAL",

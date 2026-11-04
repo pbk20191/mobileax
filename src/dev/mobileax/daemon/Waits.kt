@@ -38,6 +38,16 @@ class UiEvents(private val ua: UiAutomation) {
         consumers.remove(c)
     }
 
+    /**
+     * Takes the listener back after something else set its own: UiAutomator's
+     * UiDevice does when it is created (its QueryController), which would
+     * leave settle, watch and the waits deaf. Any thread.
+     */
+    fun reclaim() {
+        installed = false
+        install()
+    }
+
     private fun install() {
         if (installed) return
         try {

@@ -51,7 +51,9 @@ to connect and start the on-device daemon.\n\
 `ui` lists the screen as rows numbered @1, @2, …: verb (tap / fill / - for text), \
 class, label, #resource-id, centre x,y and state. Act on a row by its ref \
 (tap target \"@3\", fill selector \"@5\"), or by text, #resource_id or a CSS-like \
-selector ('Button[text=\"OK\"]').\n\
+selector ('Button[text=\"OK\"]'). `by:` targets match live on the device \
+(UiAutomator By): text= desc= res= class= pkg= (~= contains, ^= $= =/re/i), \
+clickable !enabled, has() in() window(pkg= type=ime).\n\
 \n\
 `tap`, `fill`, `type`, `swipe`, `go` and `open` wait for the screen to settle and \
 reply with what changed: + added, ~ changed and - removed rows, or the whole new \
@@ -64,16 +66,12 @@ connected). `observe: false` skips an action's settle and reply. \
 `open`, `swipe` and x,y `tap` at another display; there, tap by the x,y \
 `ui` lists.\n\
 \n\
-When you already know several steps (tap a field, fill it, press enter, wait for \
-the result), send them as one `batch`: one call instead of one per step.\n\
+Steps you already know (tap a field, fill it, press enter): send one `batch`.\n\
 \n\
-To wait for the screen, use `watch` (any change, or `until` some text shows) or \
-`wait` (a selector) instead of calling `ui` repeatedly; the device pushes \
-changes, so waiting is free. Use `screenshot` only when the rows don't tell \
-you enough (an image costs far more). \
-An error starts with ERR:CODE and says what to do next. If `use` finds no device, \
-an emulator can be started on the host with `android emulator start NAME` (give \
-the AVD hw.gpu.mode=host).";
+To wait, use `watch` (any change, or `until` some text shows) or `wait` (a \
+selector), not repeated `ui`: the device pushes changes. Use `screenshot` only \
+when the rows don't tell you enough (an image costs far more). \
+An error starts with ERR:CODE and says what to do next.";
 
 /// `mobax mcp [GLOBAL OPTIONS]`: serves until stdin closes. The options
 /// (e.g. `--device SERIAL`, `--port N`) apply to every tool call.
@@ -956,7 +954,7 @@ fn build_tools() -> Vec<Tool> {
         },
         Tool {
             name: "screenshot",
-            description: "The screen as a JPEG (768 px long edge by default), or with `target` (@N, text, selector) just that element, from full resolution.",
+            description: "The screen as a JPEG (768 px long edge by default), or with `target` just that element, from full resolution.",
             schema: obj(&[r#""target":{"type":"string"}"#, r#""size":{"type":"integer","description":"long edge px"}"#, r#""native":{"type":"boolean"}"#, DEVICE], &[]),
         },
         Tool {
@@ -981,8 +979,8 @@ fn build_tools() -> Vec<Tool> {
         },
         Tool {
             name: "swipe",
-            description: "Swipe the finger this way (up scrolls content down), or pinch two fingers `out` (zoom in) or `in` around x,y (default: centre).",
-            schema: obj(&[r#""direction":{"type":"string","enum":["up","down","left","right"]}"#, r#""pinch":{"type":"string","enum":["in","out"]}"#, r#""x":{"type":"integer"}"#, r#""y":{"type":"integer"}"#, r#""duration_ms":{"type":"integer"}"#, DISPLAY, OBSERVE, DEVICE], &[]),
+            description: "Swipe the finger this way (up scrolls content down), or pinch `out` (zoom in) / `in` around x,y (default: centre). A by: `target`: swipe inside it (lists say `end`), `fling`, `drag_to` \"x,y\".",
+            schema: obj(&[r#""direction":{"type":"string","enum":["up","down","left","right"]}"#, r#""pinch":{"type":"string","enum":["in","out"]}"#, r#""x":{"type":"integer"}"#, r#""y":{"type":"integer"}"#, r#""duration_ms":{"type":"integer"}"#, r#""target":{"type":"string"}"#, r#""fling":{"type":"boolean"}"#, r#""drag_to":{"type":"string"}"#, DISPLAY, OBSERVE, DEVICE], &[]),
         },
         Tool {
             name: "go",
@@ -1004,7 +1002,7 @@ fn build_tools() -> Vec<Tool> {
         },
         Tool {
             name: "watch",
-            description: "Wait until the screen differs from what you last saw (or `until` a row shows this text, case-insensitive), then reply with what changed.",
+            description: "Wait until the screen changes from what you last saw (or `until` a row shows this text), then reply with what changed.",
             schema: obj(&[r#""until":{"type":"string"}"#, TIMEOUT, DEVICE], &[]),
         },
         Tool {
@@ -1221,6 +1219,20 @@ fn call_tool(name: &str, args: &Value, engine: &Engine, device: Option<&str>, br
                 None => sel,
             };
             argv.extend(["fill".into(), sel, need("text")?]);
+            Via::Act
+        }
+        "swipe" if s("target").is_some() => {
+            let t = need("target")?;
+            if !t.starts_with("by:") {
+                return Err((-32602, "swipe: an element target is a by: query".into()));
+            }
+            let wire = match (s("drag_to"), s("pinch"), s("direction")) {
+                (Some(to), _, _) => format!("by_drag to={} q={t}", to.replace(' ', "")),
+                (None, Some(p), _) => format!("by_pinch {p} q={t}"),
+                (None, None, Some(d)) => format!("by_swipe dir={d}{} q={t}", if b("fling") { " fling=1" } else { "" }),
+                _ => return Err((-32602, "swipe: with a target give \"direction\", \"pinch\" or \"drag_to\"".into())),
+            };
+            argv.extend(["do".into(), wire]);
             Via::Act
         }
         "swipe" => {

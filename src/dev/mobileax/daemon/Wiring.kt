@@ -32,7 +32,7 @@ internal suspend fun buildServer(context: Context, ua: UiAutomation): Server {
     h.uiEvents = UiEvents(ua)
     h.nodes = NodeActions(ua)
     h.toasts = Toasts(h.uiEvents)
-    h.byStudy = ByStudy(ua, context)
+    h.by = ByEngine(ua, context, h.uiEvents)
     h.state = State(context, h.uiEvents)
 
     // Warm the dump path: the first dump_active on a cold VM costs ~1 s.

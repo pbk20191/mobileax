@@ -9,7 +9,7 @@ internal class Server(private val h: Handlers) {
     class Handlers {
         lateinit var ctx: Context
         lateinit var dumper: Dumper
-        lateinit var byStudy: ByStudy
+        lateinit var by: ByEngine
         lateinit var shot: Screenshot
         lateinit var input: Input
         lateinit var installer: Installer
@@ -39,8 +39,8 @@ internal class Server(private val h: Handlers) {
      * driven by [Dispatch]). Thread-safe; callers pick the thread.
      */
     fun respond(head: String, cmd: String): ByteArray? {
+        h.by.handle(head, cmd)?.let { return it }
         when (head) {
-            "by_find" -> return h.byStudy.find(cmd)
             "info" -> return utf8(h.shot.sourceSize().x.toString() + " " + h.shot.sourceSize().y)
             "pm_list" -> return runPmList(cmd)
             "pm_path" -> return runPmPath(cmd)
