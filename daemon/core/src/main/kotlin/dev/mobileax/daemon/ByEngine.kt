@@ -122,19 +122,29 @@ internal class ByEngine(private val ua: UiAutomation, private val ctx: Context, 
 
     private fun notFound(q: Query) = err("NOT_FOUND", "by:${q.source}")
 
+    /**
+     * Waits for [q] to show (or, gone=1, to go), rechecking on every
+     * accessibility event, as the daemon's other waits do: no polling, and
+     * a change is seen at once. What matches is By's; when to look is ours.
+     * Called off the main looper; the wait itself runs there.
+     */
     private fun waitFor(q: Query, opts: Map<String, String>): ByteArray {
         val timeout = opts["timeout_ms"]?.toLongOrNull() ?: 10_000
-        val t0 = System.currentTimeMillis()
-        if (opts["gone"] == "1") {
-            while (find(q).isNotEmpty()) {
-                if (System.currentTimeMillis() - t0 >= timeout) return err("TIMEOUT", "by_gone:${q.source}")
-                Thread.sleep(100)
+        val gone = opts["gone"] == "1"
+        var hit: UiObject2? = null
+        val elapsed = kotlinx.coroutines.runBlocking(Loop.Main) {
+            events.waits.awaitPredicate(timeout) {
+                kotlinx.coroutines.withContext(Loop.Blocking) {
+                    val found = find(q)
+                    hit = found.firstOrNull()
+                    if (gone) found.isEmpty() else hit != null
+                }
             }
-            return ok("ok gone elapsed=${System.currentTimeMillis() - t0}")
         }
-        val o = one(q, opts) ?: return err("TIMEOUT", "by_wait:${q.source}")
-        val c = o.visibleCenter
-        return ok("ok x=${c.x} y=${c.y} elapsed=${System.currentTimeMillis() - t0}")
+        if (elapsed < 0) return err("TIMEOUT", (if (gone) "by_gone:" else "by_wait:") + q.source)
+        if (gone) return ok("ok gone elapsed=$elapsed")
+        val c = hit!!.visibleCenter
+        return ok("ok x=${c.x} y=${c.y} elapsed=$elapsed")
     }
 
     // ── actions ─────────────────────────────────────────────────────────
