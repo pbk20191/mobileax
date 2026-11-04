@@ -75,28 +75,31 @@ a check). No LLM runs, so it is free and repeatable. Spec:
   `UNSTABLE`, but does not fail the run. s2 (whether the 4th swipe still
   scrolls), s3 and s4 (camera start-up after the permission tap) routinely
   exceed it: the action replies differ, not the calls.
-- **Known flake (a tool defect, not the harness):** on a loaded emulator a cold
-  Settings start sometimes makes `open` settle on an empty screen (`0 rows`),
-  and the next tap misses. Seen in about 1 of 15 Settings opens. Fixing that
-  settle comes first; the baseline below predates s5's current setup and is
-  re-recorded after.
+- **Fixed before this baseline** (`fix/open-settle`): `open` could report
+  "settled" on an empty screen (a cold start past its 6 s settle) or on the
+  screen before it (a late event from home); the next tap missed. A slow
+  emulator (a long-running one with its guest swapping, or a busy host) makes
+  every action several times slower: cold-boot it before measuring.
+- s1 lands on 651 or 817 tokens per session (no spread within one): the
+  tap's reply differs between sessions. Compare s1 across sessions with care.
 
 ```
 ANDROID_HOME=… python -I scripts/agent-bench.py --runs 3 --compare bench/agent/baseline.json
 ```
 
-Baseline (2026-11-04, emulator `Medium_Phone`, SDK 36, ko-KR, 3 runs;
-`bench/agent/baseline.json`). Times are from a loaded emulator (about twice
-the unloaded figures); compare time only within one session:
+Baseline (2026-11-04, emulator `Medium_Phone`, SDK 36, ko-KR, host GPU,
+fresh cold boot, idle host; `mobax` from `fix/open-settle`, 3 runs;
+`bench/agent/baseline.json`). A repeat run and a reversed-order run stayed
+within ±5% on the total (+3.6%, +2.7%) with identical calls:
 
 | Scenario | Calls | Tokens (p50) | ± (max−min) | Time (p50) |
 |---|---:|---:|---:|---:|
-| s1-settings-item | 3 | 818 | 1 | 7.8 s |
-| s2-long-list | 8 | 1870 | 388 | 17.6 s |
-| s3-search-form | 5 | 1299 | 150 | 13.6 s |
-| s4-permission-popup | 5 | 318 | 114 | 12.9 s |
-| s5-heavy-screen | 2 | 249 | 0 | 1.8 s |
-| **total** | **23** | **4554** | | |
+| s1-settings-item | 3 | 651 | 0 | 2.3 s |
+| s2-long-list | 8 | 1847 | 5 | 7.6 s |
+| s3-search-form | 5 | 1297 | 1 | 4.4 s |
+| s4-permission-popup | 5 | 526 | 116 | 2.9 s |
+| s5-heavy-screen | 3 | 260 | 0 | 0.8 s |
+| **total** | **24** | **4581** | | |
 | `tools/list` (once per session) | | 2668 | | |
 
 | Scenario | Task | Measures |
