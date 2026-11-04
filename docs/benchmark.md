@@ -82,6 +82,11 @@ a check). No LLM runs, so it is free and repeatable. Spec:
   screen before it (a late event from home); the next tap missed. A slow
   emulator (a long-running one with its guest swapping, or a busy host) makes
   every action several times slower: cold-boot it before measuring.
+- Twice, during s4 (the camera), the system watchdog killed system_server
+  (`Blocked in monitor WindowManagerService`), and the emulator's camera HAL
+  aborted right after. Not yet told apart from a cause in mobax. Since
+  `4c28b14` the daemon exits with system_server and the next call starts a
+  fresh one (seen working here); a cold boot clears the leftover state.
 - s1 lands on 651 or 817 tokens per session (no spread within one): the
   tap's reply differs between sessions. Compare s1 across sessions with care.
 

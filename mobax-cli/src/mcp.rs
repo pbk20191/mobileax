@@ -1264,9 +1264,19 @@ fn call_tool(name: &str, args: &Value, engine: &Engine, device: Option<&str>, br
         };
         let look = ["find".to_string(), sel];
         let page = ["do".to_string(), "scroll_forward".to_string()];
+        let seq = ["do".to_string(), "event_seq".to_string()];
         scroll_until(SCROLL_MAX, || run(&look, false).0, || {
-            let (ok, text) = run(&page, true);
-            if ok && !text.contains("ERR:") { Ok(()) } else { Err(()) }
+            let since = run(&seq, false).1;
+            let (ok, text) = run(&page, false);
+            if !ok || text.contains("ERR:") {
+                return Err(());
+            }
+            // The scroll animates: wait until it stops, or a tap on what it
+            // brought into view lands mid-scroll and only stops the list.
+            if let Some(n) = since.trim().strip_prefix("seq=") {
+                run(&["do".to_string(), format!("settle since={n} first_ms=300 idle_ms=300 timeout_ms=3000")], false);
+            }
+            Ok(())
         })
     });
     let (ok, text) = match via {
