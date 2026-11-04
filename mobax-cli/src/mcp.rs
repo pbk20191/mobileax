@@ -435,17 +435,6 @@ impl Engine {
             }
             None => self.observe_stepwise(t, conn, seq, b, had_rows, deadline, &mut parts)?,
         };
-        // A launching app shows its starting window first: wait for content,
-        // longer than the settle itself (a cold start under load is slow).
-        let launch_deadline = started + Duration::from_millis(b.timeout_ms.max(b.launch_ms) as u64);
-        while loading(&dump) && Instant::now() < launch_deadline {
-            let Some(since) = event_seq(conn) else { break };
-            match settle_dump(conn, since, 300, b)? {
-                Some((_, _, d)) => dump = d,
-                None => break,
-            }
-            mark("launch", &mut parts);
-        }
         // A tap that starts another activity can go quiet before the new
         // screen draws (another process starting). If nothing visible changed,
         // give it one more short window to show up.
@@ -457,6 +446,18 @@ impl Engine {
                 }
             }
             mark("second look", &mut parts);
+        }
+        // A launching app shows its starting window first: wait for content,
+        // longer than the settle itself (a cold start under load is slow).
+        // After the second look, which can catch a new screen's first, empty frame.
+        let launch_deadline = started + Duration::from_millis(b.timeout_ms.max(b.launch_ms) as u64);
+        while loading(&dump) && Instant::now() < launch_deadline {
+            let Some(since) = event_seq(conn) else { break };
+            match settle_dump(conn, since, 300, b)? {
+                Some((_, _, d)) => dump = d,
+                None => break,
+            }
+            mark("launch", &mut parts);
         }
         let note = settle_note(started.elapsed().as_millis(), still_moving, reacted, loading(&dump));
         let note = if std::env::var_os("MOBAX_TIMING").is_some() {
