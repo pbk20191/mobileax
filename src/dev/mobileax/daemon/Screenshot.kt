@@ -11,7 +11,6 @@ import android.graphics.PixelFormat
 import android.graphics.Point
 import android.hardware.HardwareBuffer
 import android.hardware.display.DisplayManager
-import android.hardware.display.VirtualDisplay
 import android.media.Image
 import android.media.ImageReader
 import android.os.Build
@@ -132,7 +131,14 @@ internal class Screenshot(private val ua: UiAutomation) {
         mirrorAt(longEdge).encodeLatest(format, quality)
 
     private suspend fun mirrorAt(longEdge: Int): Mirror = mirrorsMutex.withLock {
-        mirrors[longEdge] ?: Mirror.create(displayManager!!, sourceSize, longEdge).also { mirrors[longEdge] = it }
+        val dm = displayManager!!
+        val have = mirrors[longEdge]
+        // A SurfaceControl mirror is fixed to the orientation it was made in.
+        if (have != null && have.display.viaSurfaceControl && have.display.rotation != MirrorDisplay.currentRotation(dm)) {
+            mirrors.remove(longEdge)
+            have.close()
+        }
+        mirrors[longEdge] ?: Mirror.create(dm, sourceSize, longEdge).also { mirrors[longEdge] = it }
     }
 
     private fun fallbackCapture(longEdge: Int, quality: Int, format: String?): ByteArray {
@@ -202,7 +208,7 @@ internal class Screenshot(private val ua: UiAutomation) {
     // ---- mirror pipeline ----
     internal class Mirror private constructor(
         val reader: ImageReader,
-        val vd: VirtualDisplay,
+        val display: MirrorDisplay,
         @JvmField val outW: Int,
         @JvmField val outH: Int
     ) {
@@ -410,10 +416,7 @@ internal class Screenshot(private val ua: UiAutomation) {
                 reader.setOnImageAvailableListener(null, null)
             } catch (_: Throwable) {
             }
-            try {
-                vd.release()
-            } catch (_: Throwable) {
-            }
+            display.close()
             try {
                 reader.close()
             } catch (_: Throwable) {
@@ -430,16 +433,11 @@ internal class Screenshot(private val ua: UiAutomation) {
 
         companion object {
             suspend fun create(dm: DisplayManager, sourceSize: Point, targetLongEdge: Int): Mirror {
-                var srcW = sourceSize.x
-                var srcH = sourceSize.y
-                if (srcW <= 0 || srcH <= 0) {
-                    val d = dm.getDisplay(Display.DEFAULT_DISPLAY)
-                    val p = Point()
-                    @Suppress("DEPRECATION") // WindowMetrics needs API 30 and a window context
-                    d.getRealSize(p)
-                    srcW = p.x
-                    srcH = p.y
-                }
+                // The display as it is turned now: a SurfaceControl mirror
+                // (SDK < 34) keeps this orientation, see mirrorAt.
+                val now = MirrorDisplay.currentSize(dm)
+                val srcW = if (now.x > 0) now.x else sourceSize.x
+                val srcH = if (now.y > 0) now.y else sourceSize.y
 
                 val longEdge = max(srcW, srcH)
                 var scale = targetLongEdge.toFloat() / longEdge
@@ -452,13 +450,6 @@ internal class Screenshot(private val ua: UiAutomation) {
                     ImageReader.newInstance(outW, outH, PixelFormat.RGBA_8888, 3,
                         HardwareBuffer.USAGE_CPU_READ_OFTEN or HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE)
                 else ImageReader.newInstance(outW, outH, PixelFormat.RGBA_8888, 3)
-                val flags: Int = try {
-                    DisplayManager::class.java.getDeclaredField("VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR")
-                        .getInt(null)
-                } catch (_: Throwable) {
-                    16
-                }
-
                 // Frame-available callbacks arrive on the main looper; the pixel
                 // copy (blocks on the GPU fence) runs on the Work pool.
                 val handler = mainHandler
@@ -471,18 +462,14 @@ internal class Screenshot(private val ua: UiAutomation) {
                     mr?.onImageAvailable()
                 }, handler)
 
-                val vd = withContext(Loop.Blocking) {
-                    dm.createVirtualDisplay(
-                        "mobax-mirror-" + outW + "x" + outH, outW, outH, 320,
-                        reader.surface, flags
-                    )
-                }
-                if (vd == null) {
+                val display = try {
+                    withContext(Loop.Blocking) { MirrorDisplay.open(dm, "mobax-mirror-${outW}x$outH", outW, outH, reader.surface) }
+                } catch (t: Throwable) {
                     reader.close()
-                    throw RuntimeException("createVirtualDisplay returned null")
+                    throw t
                 }
 
-                val m = Mirror(reader, vd, outW, outH)
+                val m = Mirror(reader, display, outW, outH)
                 holder[0] = m
 
                 // Wait up to 1500 ms for the first frame so the very first capture

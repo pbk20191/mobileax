@@ -2,7 +2,6 @@ package dev.mobileax.daemon
 
 import android.graphics.Point
 import android.hardware.display.DisplayManager
-import android.hardware.display.VirtualDisplay
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
@@ -99,7 +98,6 @@ internal object Streams {
 
     private const val MIME_AVC = "video/avc"
     private const val COLOR_FORMAT_SURFACE = 0x7F000789
-    private const val VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR = 16
     /** Stock software AVC encoders cap at 2048 on both axes. */
     private const val ENCODER_MAX_DIM = 2048
 
@@ -179,7 +177,7 @@ internal object Streams {
         private val gop = ArrayList<ByteArray>()
         private var encoder: MediaCodec? = null
         private var surface: Surface? = null
-        private var vd: VirtualDisplay? = null
+        private var vd: MirrorDisplay? = null
         var released = false
             private set
 
@@ -240,8 +238,7 @@ internal object Streams {
             val sf = enc.createInputSurface()
             surface = sf
             enc.start()
-            vd = dm.createVirtualDisplay("mobax-h264-${key.w}x${key.h}", key.w, key.h, 320, sf, VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR)
-                ?: throw VdNull()
+            vd = MirrorDisplay.open(dm, "mobax-h264-${key.w}x${key.h}", key.w, key.h, sf)
             Logx.i("h264: started ${key.w}x${key.h} @ ${key.kbps} kbps  fps=${key.fps}")
         }
 
@@ -290,8 +287,7 @@ internal object Streams {
         }
 
         fun fail(t: Throwable) {
-            val e = if (t is VdNull) err("createVirtualDisplay-null")
-            else err("h264-failed:${t.javaClass.simpleName}:${t.message}").also { Logx.e("h264 encoder failed", t) }
+            val e = err("h264-failed:${t.javaClass.simpleName}:${t.message}").also { Logx.e("h264 encoder failed", t) }
             for (s in subs.toList()) { s.error = e; s.ch.close() }
         }
 
@@ -313,7 +309,7 @@ internal object Streams {
             val sf = surface
             // Codec/display teardown is synchronous binder work: keep it off main.
             Loop.blockingExecutor.execute {
-                try { v?.release() } catch (_: Throwable) {}
+                v?.close()
                 enc?.let { e ->
                     try { e.stop() } catch (_: Throwable) {}
                     try { e.release() } catch (_: Throwable) {}
@@ -326,7 +322,6 @@ internal object Streams {
     /** Frames one GOP can hold (fps × GOP seconds, a little slack), bounded for memory. */
     private fun gopMax(k: H264Key) = (k.fps * k.gopSec + 8).coerceIn(30, 600)
 
-    private class VdNull : RuntimeException("createVirtualDisplay-null")
 
     private fun concat(a: ByteBuffer?, b: ByteBuffer?): ByteArray {
         val out = ByteArray((a?.remaining() ?: 0) + (b?.remaining() ?: 0))
