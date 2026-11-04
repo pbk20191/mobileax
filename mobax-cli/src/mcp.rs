@@ -381,7 +381,8 @@ impl Engine {
             if argv.first().map(String::as_str) == Some("open") && r.text.contains("result=3") {
                 budget.first_ms = 300;
             }
-            match self.observe_change(&t, &mut sess.conn, seq, budget, verb_ms) {
+            let expect = if argv.first().map(String::as_str) == Some("open") { started_pkg(&r.text) } else { None };
+            match self.observe_change(&t, &mut sess.conn, seq, budget, verb_ms, expect.as_deref()) {
                 Ok((note, _)) if brief => r.text.push_str(&format!("\n{note}")),
                 Ok((_, change)) => r.text.push_str(&format!("\n{change}")),
                 Err(e) => {
@@ -399,7 +400,11 @@ impl Engine {
     /// Waits for the action that followed `seq` to settle, reads the screen,
     /// and describes it against the last one this server saw: (how it
     /// settled, that plus what changed).
-    fn observe_change(&self, t: &Target, conn: &mut Conn, seq: Option<u64>, b: Settle, verb_ms: u128) -> io::Result<(String, String)> {
+    /// [expect]: the package an `open` started; while the screen from
+    /// before it is still in front, the launch hasn't arrived.
+    fn observe_change(
+        &self, t: &Target, conn: &mut Conn, seq: Option<u64>, b: Settle, verb_ms: u128, expect: Option<&str>,
+    ) -> io::Result<(String, String)> {
         let started = Instant::now();
         let deadline = started + Duration::from_millis(b.timeout_ms as u64);
         // MOBAX_TIMING=1: where the time went, appended to the note.
@@ -409,7 +414,14 @@ impl Engine {
             parts.push(format!("{what} {}", lap.elapsed().as_millis()));
             lap = Instant::now();
         };
-        let had_rows = lock(&self.screens).get(t).is_some_and(|s| !s.is_empty());
+        let (had_rows, before) = {
+            let screens = lock(&self.screens);
+            let prev = screens.get(t);
+            (prev.is_some_and(|s| !s.is_empty()), prev.map(|s| s.pkg.clone()))
+        };
+        let loading = |dump: &Value| {
+            transitional(dump, had_rows) || still_before(before.as_deref(), &Screen::top_pkg(dump), expect)
+        };
         // The daemon settles and hands back the screen once it holds still,
         // in one round trip; an older one gets the steps one by one.
         let settled = match seq {
@@ -426,7 +438,7 @@ impl Engine {
         // A launching app shows its starting window first: wait for content,
         // longer than the settle itself (a cold start under load is slow).
         let launch_deadline = started + Duration::from_millis(b.timeout_ms.max(b.launch_ms) as u64);
-        while transitional(&dump, had_rows) && Instant::now() < launch_deadline {
+        while loading(&dump) && Instant::now() < launch_deadline {
             let Some(since) = event_seq(conn) else { break };
             match settle_dump(conn, since, 300, b)? {
                 Some((_, _, d)) => dump = d,
@@ -446,8 +458,7 @@ impl Engine {
             }
             mark("second look", &mut parts);
         }
-        let loading = transitional(&dump, had_rows);
-        let note = settle_note(started.elapsed().as_millis(), still_moving, reacted, loading);
+        let note = settle_note(started.elapsed().as_millis(), still_moving, reacted, loading(&dump));
         let note = if std::env::var_os("MOBAX_TIMING").is_some() {
             format!("{note} [{}]", parts.join(" · "))
         } else {
@@ -795,6 +806,21 @@ fn settle_dump(conn: &mut Conn, since: u64, first_ms: u32, b: Settle) -> io::Res
 /// screen in between two others.
 fn transitional(dump: &Value, had_rows: bool) -> bool {
     Screen::is_starting(dump) || (had_rows && Screen::row_count(dump) == 0)
+}
+
+/// An `open` of [expect] while the screen from before it ([before]) is still
+/// in front: the launch hasn't arrived (a late event from that screen ended
+/// the settle). Any other package in front counts as arrived: the app may
+/// raise another package's window first (a permission dialog).
+fn still_before(before: Option<&str>, now: &str, expect: Option<&str>) -> bool {
+    matches!((before, expect), (Some(b), Some(e)) if b != e && now == b)
+}
+
+/// The package in `open`'s reply: `ok started=PKG/ACTIVITY …`.
+fn started_pkg(text: &str) -> Option<String> {
+    let rest = text.split_once("started=")?.1;
+    let pkg = rest.split(|c: char| c == '/' || c.is_whitespace()).next()?;
+    (!pkg.is_empty()).then(|| pkg.to_string())
 }
 
 /// The daemon's event counter, to settle against after an action.
@@ -1450,6 +1476,26 @@ mod tests {
         assert_eq!(settle_note(900, false, true, false), "settled in 900 ms");
         assert_eq!(settle_note(900, true, true, false), "still changing after 900 ms");
         assert_eq!(settle_note(900, false, false, false), "no reaction on screen");
+    }
+
+    #[test]
+    fn an_open_is_loading_while_the_screen_before_it_is_still_up() {
+        // The launcher still in front of a camera launch: not there yet.
+        assert!(still_before(Some("launcher"), "launcher", Some("camera")));
+        // Another package in front (the app, or a dialog it raised): arrived.
+        assert!(!still_before(Some("launcher"), "camera", Some("camera")));
+        assert!(!still_before(Some("launcher"), "permissioncontroller", Some("camera")));
+        // Reopening the app already in front, or not an open: nothing to wait for.
+        assert!(!still_before(Some("camera"), "camera", Some("camera")));
+        assert!(!still_before(Some("launcher"), "launcher", None));
+        assert!(!still_before(None, "launcher", Some("camera")));
+    }
+
+    #[test]
+    fn open_reply_names_the_started_package() {
+        assert_eq!(started_pkg("ok started=com.android.camera2/com.android.camera.CameraLauncher result=0").as_deref(),
+                   Some("com.android.camera2"));
+        assert_eq!(started_pkg("ok force-stop=x"), None);
     }
 
     #[test]
