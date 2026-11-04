@@ -187,6 +187,15 @@ mobax tap 'Button:has-text("Continue"):in(LinearLayout[id~=footer])' --unique
 mobax tap 'Button:has-text("Continue")' --visible --nth 2
 ```
 
+Other ways to narrow it down:
+
+```bash
+mobax tap 'LinearLayout:has(TextView[text=Wi-Fi])'      # the row holding the label (innermost row only)
+mobax tap '[text="continue" i]'                           # case-insensitive
+mobax tap '[text=/^(log|sign) ?in$/i]'                    # regex (search; anchor with ^ $)
+mobax fill 'EditText:below(TextView[text=Email])' me@x    # nearest field under the label comes first
+```
+
 ## Two-factor SMS
 
 `mobax sms` reads the inbox directly via `IContentProvider` — no installed

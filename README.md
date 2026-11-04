@@ -162,7 +162,7 @@ mobax tap   'Button:has-text("Sign in")'        --visible --unique --timeout 5s
 mobax wait  "Dashboard"                         --timeout 15s
 ```
 
-Vocabulary: `#id` `[a=v]` `[a~=sub]` `[a^=pre]` `[a$=suf]` · `:visible :clickable :enabled :focused :checked :editable :heading` · `:has-text("x") :text-is("x")` · `:in(SEL) :below(SEL) :right-of(SEL) :near(SEL, PX)`. Comma is OR. More patterns in [docs/cookbook.md](docs/cookbook.md).
+Vocabulary: `#id` `[a=v]` `[a~=sub]` `[a^=pre]` `[a$=suf]` `[a="v" i]` `[a=/re/i]` · `:visible :clickable :enabled :focused :checked :editable :heading` · `:has-text("x") :text-is("x") :text-matches("re", "i")` · `:in(SEL) :has(SEL) :below(SEL) :right-of(SEL) :near(SEL, PX)` (the spatial ones list the nearest match first). Comma is OR; an unknown attribute name is an error. More patterns in [docs/cookbook.md](docs/cookbook.md).
 
 ## How it works
 

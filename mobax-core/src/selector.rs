@@ -9,16 +9,24 @@
 //   [attr^=value]        prefix
 //   [attr$=value]        suffix
 //   [attr]               attribute present (non-empty)
+//   [attr="v" i]         any of the above, case-insensitive (CSS Selectors 4)
+//   [attr=/re/i]         regex search (flags: i); see crate::regex
+//                        Values may be quoted ("…" or '…', with \" \' \\ escapes);
+//                        an unquoted value runs to the `]`. Unknown attribute
+//                        names are an error, not a silent miss.
 //   #name                resource-id, short (`#email`) or full (`#com.app:id/email`);
 //                        `[id=email]` also matches the short form
 //   :flag                node has the given a11y flag (clickable, enabled, editable, heading, …)
 //   [role=…] [state=…]   Compose / androidx role and state descriptions (device language)
 //   :has-text("foo")     substring text match (Playwright sugar for [text~=foo])
 //   :text-is("foo")      exact text match    (Playwright sugar for [text=foo])
+//   :text-matches("re", "i")  regex text match (Playwright's :text-matches)
+//   :has(SEL)            has a descendant matching SEL; of nested matches only
+//                        the innermost is kept (the row, not every ancestor)
 //   :in(SEL)             descendant of any node matching SEL
-//   :below(SEL)          top edge ≥ anchor's bottom edge
-//   :right-of(SEL)       left edge ≥ anchor's right edge
-//   :near(SEL, PX)       centre-to-centre distance ≤ PX
+//   :below(SEL)          top edge ≥ anchor's bottom edge   } a lone selector's
+//   :right-of(SEL)       left edge ≥ anchor's right edge   } matches come
+//   :near(SEL, PX)       centre-to-centre distance ≤ PX    } nearest first
 //   Tag[a=v][b=v]:flag   AND-combined
 //
 // Multiple comma-separated selectors run as OR (any matches). The
@@ -45,6 +53,7 @@ pub struct Selector {
 #[derive(Debug, Clone)]
 pub enum Relation {
     In(Vec<Selector>),                       // descendant of any matching ancestor
+    Has(Vec<Selector>),                      // ancestor of any matching descendant
     Near(Vec<Selector>, i64),                // centre distance ≤ PX
     Below(Vec<Selector>),                    // top edge ≥ anchor's bottom
     RightOf(Vec<Selector>),                  // left edge ≥ anchor's right
@@ -62,10 +71,20 @@ pub struct AttrPred {
     pub key: String,     // normalised to the JSON field name ("rid", "text", …)
     pub op: AttrOp,
     pub val: String,
+    /// The `i` flag: compare case-insensitively.
+    pub ci: bool,
+    /// For [`AttrOp::Regex`].
+    pub re: Option<crate::regex::Regex>,
+}
+
+impl AttrPred {
+    fn new(key: &str, op: AttrOp, val: String) -> AttrPred {
+        AttrPred { key: key.into(), op, val, ci: false, re: None }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AttrOp { Eq, Has, Substr, Prefix, Suffix }
+pub enum AttrOp { Eq, Has, Substr, Prefix, Suffix, Regex }
 
 impl Selector {
     pub fn parse(input: &str) -> Result<Vec<Selector>, String> {
@@ -92,16 +111,7 @@ impl Selector {
         }
         // attributes
         for p in &self.attrs {
-            let v = get_str(node, &p.key).unwrap_or("");
-            let ok = match p.op {
-                AttrOp::Eq if p.key == "rid" => rid_eq(v, &p.val),
-                AttrOp::Eq     => v == p.val,
-                AttrOp::Substr => v.contains(&p.val),
-                AttrOp::Prefix => v.starts_with(&p.val),
-                AttrOp::Suffix => v.ends_with(&p.val),
-                AttrOp::Has    => !v.is_empty(),
-            };
-            if !ok { return false; }
+            if !p.holds(get_str(node, &p.key).unwrap_or("")) { return false; }
         }
         // flags (single-letter codes from Traverse.java's encoded string)
         if !self.flags.is_empty() {
@@ -111,6 +121,22 @@ impl Selector {
             }
         }
         true
+    }
+}
+
+impl AttrPred {
+    fn holds(&self, v: &str) -> bool {
+        if let Some(re) = &self.re { return re.is_match(v); }
+        if self.op == AttrOp::Has { return !v.is_empty(); }
+        let (v, want) = if self.ci { (v.to_lowercase(), self.val.to_lowercase()) } else { (v.to_string(), self.val.clone()) };
+        match self.op {
+            AttrOp::Eq if self.key == "rid" => rid_eq(&v, &want),
+            AttrOp::Eq     => v == want,
+            AttrOp::Substr => v.contains(&want),
+            AttrOp::Prefix => v.starts_with(&want),
+            AttrOp::Suffix => v.ends_with(&want),
+            AttrOp::Has | AttrOp::Regex => unreachable!(),
+        }
     }
 }
 
@@ -135,7 +161,7 @@ fn parse_one(s: &str) -> Result<Selector, String> {
             if len == 0 {
                 return Err(format!("expected a resource-id after '#' at position {i}"));
             }
-            attrs.push(AttrPred { key: "rid".into(), op: AttrOp::Eq, val: s[i + 1..i + 1 + len].into() });
+            attrs.push(AttrPred::new("rid", AttrOp::Eq, s[i + 1..i + 1 + len].into()));
             i += 1 + len;
         } else if c == ':' {
             let (psd, adv) = parse_pseudo(&s[i..])?;
@@ -189,39 +215,98 @@ fn rid_eq(rid: &str, want: &str) -> bool {
 }
 
 fn parse_attr(s: &str) -> Result<(AttrPred, usize), String> {
-    // s starts with '['
-    let bytes = s.as_bytes();
-    assert_eq!(bytes[0], b'[');
-    let close = s.find(']').ok_or("unterminated [attribute]")?;
-    let inner = &s[1..close];
-    // possible operators: =, ~=, ^=, $=
-    let (key, op, val) = if let Some(p) = inner.find("~=") {
-        (&inner[..p], AttrOp::Substr, unquote(&inner[p + 2..]))
-    } else if let Some(p) = inner.find("^=") {
-        (&inner[..p], AttrOp::Prefix, unquote(&inner[p + 2..]))
-    } else if let Some(p) = inner.find("$=") {
-        (&inner[..p], AttrOp::Suffix, unquote(&inner[p + 2..]))
-    } else if let Some(p) = inner.find('=') {
-        (&inner[..p], AttrOp::Eq, unquote(&inner[p + 1..]))
-    } else {
-        (inner, AttrOp::Has, String::new())
+    // s starts with '['. Scan by char so quoted values may hold `]`, `=`, …
+    let chars: Vec<(usize, char)> = s.char_indices().collect();
+    let at = |k: usize| chars.get(k).map(|&(_, c)| c);
+    let byte = |k: usize| chars.get(k).map_or(s.len(), |&(b, _)| b);
+    let mut k = 1;
+    while at(k).is_some_and(char::is_whitespace) { k += 1; }
+    let key_start = k;
+    while at(k).is_some_and(|c| !matches!(c, '=' | '~' | '^' | '$' | ']') && !c.is_whitespace()) { k += 1; }
+    let key = normalise_key(&s[byte(key_start)..byte(k)])?;
+    while at(k).is_some_and(char::is_whitespace) { k += 1; }
+    let op = match (at(k), at(k + 1)) {
+        (Some(']'), _) => return Ok((AttrPred::new(&key, AttrOp::Has, String::new()), byte(k + 1))),
+        (Some('='), _) => { k += 1; AttrOp::Eq }
+        (Some('~'), Some('=')) => { k += 2; AttrOp::Substr }
+        (Some('^'), Some('=')) => { k += 2; AttrOp::Prefix }
+        (Some('$'), Some('=')) => { k += 2; AttrOp::Suffix }
+        (None, _) => return Err("unterminated [attribute]".into()),
+        (Some(c), _) => return Err(format!("expected =, ~=, ^=, $= or ] in [{key}…], got '{c}'")),
     };
-    let key = normalise_key(key.trim());
-    Ok((AttrPred { key, op, val }, close + 1))
+    while at(k).is_some_and(char::is_whitespace) { k += 1; }
+    let mut pred = AttrPred::new(&key, op, String::new());
+    match at(k) {
+        Some(q @ ('"' | '\'')) => {
+            let (val, end) = read_quoted(s, byte(k), q)?;
+            pred.val = val;
+            k = chars.iter().position(|&(b, _)| b >= end).unwrap_or(chars.len());
+            while at(k).is_some_and(char::is_whitespace) { k += 1; }
+            if at(k) == Some('i') { pred.ci = true; k += 1; }
+        }
+        Some('/') => {
+            if op != AttrOp::Eq { return Err(format!("a /regex/ goes with = in [{key}…]")); }
+            let (pat, end) = read_quoted(s, byte(k), '/')?;
+            k = chars.iter().position(|&(b, _)| b >= end).unwrap_or(chars.len());
+            let mut ci = false;
+            while let Some(f) = at(k).filter(char::is_ascii_alphabetic) {
+                if f != 'i' { return Err(format!("unknown regex flag '{f}' (only i)")); }
+                ci = true;
+                k += 1;
+            }
+            pred.op = AttrOp::Regex;
+            pred.re = Some(crate::regex::Regex::new(&pat, ci).map_err(|e| format!("in [{key}=/{pat}/]: {e}"))?);
+            pred.val = pat;
+        }
+        _ => {
+            // Unquoted: everything up to the `]`, trimmed (spaces allowed).
+            let begin = k;
+            while at(k).is_some_and(|c| c != ']') { k += 1; }
+            pred.val = s[byte(begin)..byte(k)].trim().to_string();
+        }
+    }
+    while at(k).is_some_and(char::is_whitespace) { k += 1; }
+    if at(k) != Some(']') { return Err(format!("expected ] to close [{key}…]")); }
+    Ok((pred, byte(k + 1)))
 }
 
-/// CSS-like attribute names → JSON field names used by the daemon.
-fn normalise_key(k: &str) -> String {
-    match k {
-        "class"        => "cls".into(),
-        "package"      => "pkg".into(),
-        "id" | "resource-id" => "rid".into(),
-        "content-desc" | "desc" => "desc".into(),
-        "hint"         => "hint".into(),
-        "text"         => "text".into(),
-        "package-name" => "pkg".into(),
-        other => other.to_string(),
+/// `s[start]` is the quote `q`: the unescaped text up to the closing `q`,
+/// and the byte index just past it. `\q` and `\\` are escapes; for a /regex/
+/// every other `\x` is kept as is (the regex reads it).
+fn read_quoted(s: &str, start: usize, q: char) -> Result<(String, usize), String> {
+    let mut out = String::new();
+    let mut it = s[start + q.len_utf8()..].char_indices();
+    while let Some((i, c)) = it.next() {
+        if c == q { return Ok((out, start + q.len_utf8() + i + c.len_utf8())); }
+        if c == '\\' {
+            match it.next() {
+                Some((_, e)) if e == q || (e == '\\' && q != '/') => out.push(e),
+                Some((_, e)) => { out.push('\\'); out.push(e); }
+                None => break,
+            }
+        } else {
+            out.push(c);
+        }
     }
+    Err(format!("unterminated {q}…{q}"))
+}
+
+/// The attributes a dump node has, and the CSS-ish names for them.
+const KNOWN_KEYS: &[&str] = &["text", "desc", "hint", "id", "resource-id", "class", "package", "role", "state", "content-desc"];
+
+/// CSS-like attribute names → JSON field names used by the daemon.
+fn normalise_key(k: &str) -> Result<String, String> {
+    Ok(match k {
+        "class" | "cls"            => "cls",
+        "package" | "package-name" | "pkg" => "pkg",
+        "id" | "resource-id" | "rid" => "rid",
+        "content-desc" | "desc"    => "desc",
+        "hint"                     => "hint",
+        "text"                     => "text",
+        "role"                     => "role",
+        "state"                    => "state",
+        other => return Err(format!("unknown attribute [{other}] — use one of: {}", KNOWN_KEYS.join(", "))),
+    }.to_string())
 }
 
 enum Pseudo {
@@ -243,15 +328,13 @@ fn split_top_level(input: &str, delim: char) -> Vec<String> {
     let mut bracket = 0i32;
     let mut in_dq = false;
     let mut in_sq = false;
+    let mut escaped = false;
     for c in input.chars() {
-        if in_dq {
+        if in_dq || in_sq {
             buf.push(c);
-            if c == '"' { in_dq = false; }
-            continue;
-        }
-        if in_sq {
-            buf.push(c);
-            if c == '\'' { in_sq = false; }
+            if escaped { escaped = false; }
+            else if c == '\\' { escaped = true; }
+            else if (in_dq && c == '"') || (in_sq && c == '\'') { in_dq = false; in_sq = false; }
             continue;
         }
         match c {
@@ -291,29 +374,40 @@ fn parse_pseudo(s: &str) -> Result<(Pseudo, usize), String> {
         let inner = &s[i + 1..close];
         match name {
             "has-text" => {
-                let val = unquote(inner);
+                let val = unquote(inner)?;
                 if val.is_empty() {
                     return Err(":has-text needs (\"TEXT\")".into());
                 }
-                return Ok((
-                    Pseudo::Attr(AttrPred { key: "text".into(), op: AttrOp::Substr, val }),
-                    close + 1,
-                ));
+                return Ok((Pseudo::Attr(AttrPred::new("text", AttrOp::Substr, val)), close + 1));
             }
             "text-is" => {
-                let val = unquote(inner);
+                let val = unquote(inner)?;
                 if val.is_empty() {
                     return Err(":text-is needs (\"TEXT\")".into());
                 }
-                return Ok((
-                    Pseudo::Attr(AttrPred { key: "text".into(), op: AttrOp::Eq, val }),
-                    close + 1,
-                ));
+                return Ok((Pseudo::Attr(AttrPred::new("text", AttrOp::Eq, val)), close + 1));
+            }
+            "text-matches" => {
+                // :text-matches("re") or :text-matches("re", "i")
+                let parts = split_top_level(inner, ',');
+                let pat = unquote(parts.first().map_or("", |p| p.as_str()))?;
+                let flags = parts.get(1).map(|f| unquote(f)).transpose()?.unwrap_or_default();
+                if pat.is_empty() || parts.len() > 2 {
+                    return Err(":text-matches needs (\"REGEX\") or (\"REGEX\", \"i\")".into());
+                }
+                if let Some(f) = flags.chars().find(|&f| f != 'i') {
+                    return Err(format!(":text-matches: unknown flag '{f}' (only i)"));
+                }
+                let re = crate::regex::Regex::new(&pat, flags.contains('i')).map_err(|e| format!(":text-matches: {e}"))?;
+                let mut p = AttrPred::new("text", AttrOp::Regex, pat);
+                p.re = Some(re);
+                return Ok((Pseudo::Attr(p), close + 1));
             }
             _ => {}
         }
         let rel = match name {
             "in"       => Relation::In(Selector::parse(inner)?),
+            "has"      => Relation::Has(Selector::parse(inner)?),
             "below"    => Relation::Below(Selector::parse(inner)?),
             "right-of" => Relation::RightOf(Selector::parse(inner)?),
             "near" => {
@@ -353,33 +447,38 @@ fn parse_pseudo(s: &str) -> Result<(Pseudo, usize), String> {
     Ok((Pseudo::Flag(flag), i))
 }
 
-/// `s[start]` is `(`. Return the index of the matching `)` allowing one
-/// level of nesting (good enough for `:near(EditText[id~=email], 60)`).
+/// `s[start]` is `(`: the index of its matching `)`, skipping quoted text
+/// (so `:has-text(")")` and `:text-is("a(b")` work).
 fn find_matching_paren(s: &str, start: usize) -> Option<usize> {
-    let bytes = s.as_bytes();
-    debug_assert_eq!(bytes[start], b'(');
+    debug_assert_eq!(s.as_bytes()[start], b'(');
     let mut depth = 0i32;
-    let mut i = start;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'(' => depth += 1,
-            b')' => { depth -= 1; if depth == 0 { return Some(i); } }
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (i, c) in s[start..].char_indices() {
+        if let Some(q) = quote {
+            if escaped { escaped = false; } else if c == '\\' { escaped = true; } else if c == q { quote = None; }
+            continue;
+        }
+        match c {
+            '"' | '\'' => quote = Some(c),
+            '(' => depth += 1,
+            ')' => { depth -= 1; if depth == 0 { return Some(start + i); } }
             _ => {}
         }
-        i += 1;
     }
     None
 }
 
-fn unquote(s: &str) -> String {
+/// A pseudo-class argument: quoted (with escapes) or bare.
+fn unquote(s: &str) -> Result<String, String> {
     let s = s.trim();
-    let bytes = s.as_bytes();
-    if bytes.len() >= 2 && (bytes[0] == b'"' || bytes[0] == b'\'')
-        && bytes[bytes.len() - 1] == bytes[0]
-    {
-        s[1..s.len() - 1].to_string()
-    } else {
-        s.to_string()
+    match s.chars().next() {
+        Some(q @ ('"' | '\'')) => {
+            let (val, end) = read_quoted(s, 0, q)?;
+            if !s[end..].trim().is_empty() { return Err(format!("unexpected text after {q}…{q}: '{}'", &s[end..])); }
+            Ok(val)
+        }
+        _ => Ok(s.to_string()),
     }
 }
 
@@ -431,6 +530,9 @@ pub struct MatchCtx<'a> {
     /// Parent map keyed by node pointer-identity (raw `*const Value`),
     /// computed lazily on first relational evaluation.
     parent: std::cell::OnceCell<std::collections::HashMap<usize, &'a Value>>,
+    /// Anchors of each relational argument, found once per context instead
+    /// of once per candidate node (keyed by the argument's address).
+    anchors: std::cell::RefCell<std::collections::HashMap<usize, Vec<&'a Value>>>,
 }
 
 impl<'a> MatchCtx<'a> {
@@ -440,7 +542,7 @@ impl<'a> MatchCtx<'a> {
 
     /// Match over the given window roots only, in that order.
     pub fn from_roots(roots: Vec<&'a Value>) -> Self {
-        Self { roots, parent: std::cell::OnceCell::new() }
+        Self { roots, parent: std::cell::OnceCell::new(), anchors: Default::default() }
     }
 
     /// Build (or fetch) the parent-pointer map needed by `:in()`.
@@ -474,17 +576,56 @@ impl<'a> MatchCtx<'a> {
                 }
                 false
             }
+            Relation::Has(sels) => {
+                let mut stack: Vec<&'a Value> = children(node).map(|k| k.iter().collect()).unwrap_or_default();
+                while let Some(d) = stack.pop() {
+                    if sels.iter().any(|s| self.matches(s, d)) { return true; }
+                    if let Some(k) = children(d) { stack.extend(k.iter()); }
+                }
+                false
+            }
             Relation::Near(sels, px)    => self.has_anchor_within(sels, node, *px),
             Relation::Below(sels)       => self.has_anchor_directional(sels, node, Dir::Below),
             Relation::RightOf(sels)     => self.has_anchor_directional(sels, node, Dir::RightOf),
         }
     }
 
+    /// The nodes `sels` matches, cached for this context.
+    fn anchors_of(&self, sels: &[Selector]) -> Vec<&'a Value> {
+        let key = sels.as_ptr() as usize;
+        if let Some(v) = self.anchors.borrow().get(&key) { return v.clone(); }
+        let v = find_all_with(self, sels);
+        self.anchors.borrow_mut().insert(key, v.clone());
+        v
+    }
+
+    /// How far `node` is from its nearest anchor under its first spatial
+    /// relation; `None` when it has none.
+    fn spatial_distance(&self, sel: &Selector, node: &'a Value) -> Option<i64> {
+        let n = bounds(node)?;
+        let (sels, dir) = sel.relations.iter().find_map(|r| match r {
+            Relation::Below(s) => Some((s, Some(Dir::Below))),
+            Relation::RightOf(s) => Some((s, Some(Dir::RightOf))),
+            Relation::Near(s, _) => Some((s, None)),
+            _ => None,
+        })?;
+        let gap = |lo: i64, hi: i64, alo: i64, ahi: i64| if hi < alo { alo - hi } else if ahi < lo { lo - ahi } else { 0 };
+        self.anchors_of(sels).iter().filter_map(|a| bounds(a)).filter_map(|b| match dir {
+            Some(Dir::Below) if n.1 >= b.3 => Some((n.1 - b.3) + gap(n.0, n.2, b.0, b.2)),
+            Some(Dir::RightOf) if n.0 >= b.2 => Some((n.0 - b.2) + gap(n.1, n.3, b.1, b.3)),
+            None => {
+                let (dx, dy) = ((n.0 + n.2) / 2 - (b.0 + b.2) / 2, (n.1 + n.3) / 2 - (b.1 + b.3) / 2);
+                Some(((dx * dx + dy * dy) as f64).sqrt() as i64)
+            }
+            _ => None,
+        }).min()
+    }
+
     fn has_anchor_within(&self, sels: &[Selector], node: &'a Value, px: i64) -> bool {
         let n = match bounds(node) { Some(b) => b, None => return false };
         let cx = (n.0 + n.2) / 2;
         let cy = (n.1 + n.3) / 2;
-        let anchors = find_all_with(self, sels);
+        let anchors = self.anchors_of(sels);
         for a in anchors {
             if let Some(b) = bounds(a) {
                 let acx = (b.0 + b.2) / 2;
@@ -499,7 +640,7 @@ impl<'a> MatchCtx<'a> {
 
     fn has_anchor_directional(&self, sels: &[Selector], node: &'a Value, dir: Dir) -> bool {
         let n = match bounds(node) { Some(b) => b, None => return false };
-        let anchors = find_all_with(self, sels);
+        let anchors = self.anchors_of(sels);
         for a in anchors {
             if let Some(b) = bounds(a) {
                 let ok = match dir {
@@ -529,22 +670,44 @@ fn build_parents<'a>(
     }
 }
 
-/// Like `find_all` but reuses a pre-built `MatchCtx`. Internal — public
-/// callers use `find_all`.
+/// Every node any of `selectors` matches, in tree order, with two
+/// refinements: of nested matches of a `:has(…)` selector only the innermost
+/// is kept, and a lone selector with `:below` / `:right-of` / `:near` returns
+/// its matches nearest-first.
 pub fn find_all_with<'a>(ctx: &MatchCtx<'a>, selectors: &[Selector]) -> Vec<&'a Value> {
-    let mut out = Vec::new();
+    let mut out: Vec<(&'a Value, usize)> = Vec::new();
     for &root in &ctx.roots {
         let mut stack: Vec<&'a Value> = vec![root];
         while let Some(n) = stack.pop() {
-            for s in selectors {
-                if ctx.matches(s, n) { out.push(n); break; }
-            }
+            if let Some(i) = selectors.iter().position(|s| ctx.matches(s, n)) { out.push((n, i)); }
             if let Some(kids) = children(n) {
                 for c in kids.iter().rev() { stack.push(c); }
             }
         }
     }
-    out
+    let has = |i: usize| selectors[i].relations.iter().any(|r| matches!(r, Relation::Has(_)));
+    if out.iter().any(|&(_, i)| has(i)) {
+        // A match whose subtree holds another match of the same selector is an
+        // outer container of it: drop it.
+        let ids: std::collections::HashSet<(usize, usize)> = out.iter().map(|&(n, i)| (n as *const Value as usize, i)).collect();
+        out.retain(|&(n, i)| !has(i) || !holds_match(n, i, &ids));
+    }
+    let mut nodes: Vec<&'a Value> = out.into_iter().map(|(n, _)| n).collect();
+    if let [sel] = selectors {
+        if sel.relations.iter().any(|r| matches!(r, Relation::Below(_) | Relation::RightOf(_) | Relation::Near(..))) {
+            nodes.sort_by_key(|n| ctx.spatial_distance(sel, n).unwrap_or(i64::MAX));
+        }
+    }
+    nodes
+}
+
+fn holds_match(node: &Value, sel: usize, ids: &std::collections::HashSet<(usize, usize)>) -> bool {
+    let mut stack: Vec<&Value> = children(node).map(|k| k.iter().collect()).unwrap_or_default();
+    while let Some(d) = stack.pop() {
+        if ids.contains(&(d as *const Value as usize, sel)) { return true; }
+        if let Some(k) = children(d) { stack.extend(k.iter()); }
+    }
+    false
 }
 
 /// What a match must be, beyond the selector (`--visible` / `--clickable`
@@ -638,6 +801,82 @@ mod tests {
     fn rejects_empty_has_text_argument() {
         let err = Selector::parse("Button:has-text(\"\")").unwrap_err();
         assert!(err.contains("has-text"), "got {err}");
+    }
+
+    fn node(json: &str) -> Value { crate::json::parse(json).unwrap() }
+
+    fn texts<'a>(root: &'a Value, sel: &str) -> Vec<&'a str> {
+        let ctx = MatchCtx::from_roots(vec![root]);
+        find_all_with(&ctx, &Selector::parse(sel).unwrap()).into_iter().map(|n| get_str(n, "text").unwrap_or("")).collect()
+    }
+
+    fn one(sel: &str, json: &str) -> bool { Selector::parse(sel).unwrap()[0].matches(&node(json)) }
+
+    #[test]
+    fn quoted_values_may_hold_brackets_and_operator_characters() {
+        assert!(one(r#"[text="a]b"]"#, r#"{"text":"a]b"}"#));
+        assert!(one(r#"[text="1^=2"]"#, r#"{"text":"1^=2"}"#));
+        assert!(!one(r#"[text="1^=2"]"#, r#"{"text":"1^=2x"}"#), "= is exact, not prefix");
+        assert!(one(r#"[desc='x~=y']"#, r#"{"desc":"x~=y"}"#));
+        assert!(one(r#"[text="say \"hi\""]"#, r#"{"text":"say \"hi\""}"#));
+        assert!(one("[text=Hello World]", r#"{"text":"Hello World"}"#), "unquoted values with spaces still work");
+    }
+
+    #[test]
+    fn pseudo_arguments_may_hold_parentheses() {
+        assert!(one(r#":has-text("설정 (고급)")"#, r#"{"text":"설정 (고급) 메뉴"}"#));
+        assert!(one(r#":has-text(")")"#, r#"{"text":"a)"}"#));
+        assert!(one(r#":text-is("(")"#, r#"{"text":"("}"#));
+    }
+
+    #[test]
+    fn an_unknown_attribute_is_an_error_not_a_silent_miss() {
+        let e = Selector::parse("[txt=OK]").unwrap_err();
+        assert!(e.contains("unknown attribute") && e.contains("text"), "{e}");
+        for ok in ["[text=a]", "[desc=a]", "[hint=a]", "[id=a]", "[resource-id=a]", "[class=a]", "[package=a]", "[role=a]", "[state=a]"] {
+            assert!(Selector::parse(ok).is_ok(), "{ok}");
+        }
+    }
+
+    #[test]
+    fn the_i_flag_matches_case_insensitively() {
+        assert!(one(r#"[text="sign in" i]"#, r#"{"text":"Sign In"}"#));
+        assert!(one(r#"[text~="SIGN" i]"#, r#"{"text":"please sign in"}"#));
+        assert!(!one(r#"[text="sign in"]"#, r#"{"text":"Sign In"}"#));
+    }
+
+    #[test]
+    fn regex_values_and_text_matches() {
+        assert!(one(r"[text=/sign\s*in/i]", r#"{"text":"Please SIGN  IN"}"#));
+        assert!(one(r"[text=/^OK$/]", r#"{"text":"OK"}"#));
+        assert!(!one(r"[text=/^OK$/]", r#"{"text":"OK!"}"#));
+        assert!(one(r#":text-matches("log.?in", "i")"#, r#"{"text":"LOG-IN"}"#));
+        assert!(one(r#"[desc=/\d{2,3} items?/]"#, r#"{"desc":"12 items"}"#));
+        assert!(Selector::parse(r"[text=/(unclosed/]").is_err());
+        assert!(Selector::parse(r"[text~=/x/]").is_err(), "a regex goes with =");
+    }
+
+    #[test]
+    fn has_keeps_the_innermost_container() {
+        let root = node(r#"{"cls":"android.widget.LinearLayout","text":"outer","children":[
+            {"cls":"android.widget.LinearLayout","text":"row","children":[{"cls":"android.widget.TextView","text":"Wi-Fi"}]},
+            {"cls":"android.widget.LinearLayout","text":"other","children":[{"cls":"android.widget.TextView","text":"Bluetooth"}]}]}"#);
+        assert_eq!(texts(&root, "LinearLayout:has(TextView[text=Wi-Fi])"), ["row"]);
+        assert!(texts(&root, "LinearLayout:has(TextView[text=NFC])").is_empty());
+    }
+
+    #[test]
+    fn below_and_right_of_put_the_nearest_first() {
+        // Tree order is far → near; the result must be near → far.
+        let root = node(r#"{"cls":"android.widget.FrameLayout","bounds":[0,0,1000,2000],"children":[
+            {"cls":"android.widget.EditText","text":"far","bounds":[0,800,1000,900]},
+            {"cls":"android.widget.EditText","text":"near","bounds":[0,220,1000,300]},
+            {"cls":"android.widget.TextView","text":"Email","bounds":[0,100,300,200]},
+            {"cls":"android.widget.Button","text":"right-far","bounds":[900,100,1000,200]},
+            {"cls":"android.widget.Button","text":"right-near","bounds":[350,100,500,200]}]}"#);
+        assert_eq!(texts(&root, "EditText:below(TextView[text=Email])"), ["near", "far"]);
+        assert_eq!(texts(&root, "Button:right-of(TextView[text=Email])"), ["right-near", "right-far"]);
+        assert_eq!(texts(&root, "Button:near(TextView[text=Email], 2000)"), ["right-near", "right-far"]);
     }
 
     #[test]
