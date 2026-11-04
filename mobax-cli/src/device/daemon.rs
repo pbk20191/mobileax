@@ -337,10 +337,23 @@ pub(crate) fn connect(opts: &ConnectOpts) -> io::Result<(String, u16)> {
         thread::sleep(Duration::from_millis(40));
     }
     let r = adb(Some(&serial), &["shell", "cat", DEVICE_LOG])?;
-    Err(io::Error::other(format!(
-        "daemon did not come up within 6s\n--- device log ---\n{}",
-        r.stdout
-    )))
+    Err(io::Error::other(startup_failure(&jar, &r.stdout)))
+}
+
+/// Why `use` gave up: which jar it ran (the probe can fall back to another
+/// checkout's build/, which may not match this binary) and the device log.
+fn startup_failure(jar: &Path, log: &str) -> String {
+    let log = if log.trim().is_empty() {
+        "(empty: the VM died before logging; try `adb logcat -d -s AndroidRuntime`)".to_string()
+    } else {
+        log.to_string()
+    };
+    format!(
+        "daemon did not come up within 6s, running {}\n\
+         If that jar is not from this build, point MOBILEAX_JAR at the right one.\n\
+         --- device log ---\n{log}",
+        jar.display()
+    )
 }
 
 /// Send a length-prefixed `ping` and expect `pong`. Tight timeouts so a
@@ -559,6 +572,17 @@ fn write_devinfo_cache(serial: &str, sdk: &str, model: &str) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_daemon_that_never_answers_names_the_jar_it_ran() {
+        let jar = std::path::Path::new("D:/other-checkout/build/mobax.jar");
+        let m = super::startup_failure(jar, "");
+        assert!(m.contains("D:/other-checkout/build/mobax.jar"), "{m}");
+        assert!(m.contains("MOBILEAX_JAR"), "{m}");
+        assert!(m.contains("logcat"), "{m}");
+        let m = super::startup_failure(jar, "Exception in thread main\n");
+        assert!(m.contains("Exception in thread main") && !m.contains("logcat"), "{m}");
+    }
+
     #[test]
     fn android_info_sdk_line() {
         let info = "sdk: E:\\packages\\Android\\Sdk\nversion: 1.0.16625370\n";
