@@ -100,7 +100,7 @@ data object Main {
         h.input = Input(ua)
         h.sysCtx = context
         h.installer = Installer(context)
-        h.pm = Pm(context)
+        h.pm = Pm(context, ua)
         h.manifest = Manifest(context)
         h.providers = Providers()
         h.location = Location()
@@ -109,7 +109,7 @@ data object Main {
         h.am = Am(context)
         try { h.props = Props() } catch (t: Throwable) { Logx.bootWarn("Props init failed", t) }
         h.settings = SettingsApi(context)
-        h.wm = Wm(context.getSystemService(DisplayManager::class.java))
+        h.wm = Wm(context.getSystemService(DisplayManager::class.java), ua)
         h.uiEvents = UiEvents(ua)
         h.nodes = NodeActions(ua)
         h.toasts = Toasts(h.uiEvents)

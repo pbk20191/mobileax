@@ -59,13 +59,6 @@ internal class State(
     // this SDK level / not yet probed".
 
     @Volatile
-    private var isInteractive1: Method? = null // (int displayId)
-
-    @Volatile
-    private var isInteractive0: Method? = null // ()
-
-
-    @Volatile
     private var getTasks: Method? = null
 
 
@@ -97,16 +90,8 @@ internal class State(
     // ---------- power ----------
     fun interactive(): ByteArray {
         try {
-            val pm = powerBinder()
-            if (isInteractive1 != null) {
-                val b = isInteractive1!!.invoke(pm, Display.DEFAULT_DISPLAY) as Boolean
-                return bytes(b.toString())
-            }
-            if (isInteractive0 != null) {
-                val b = isInteractive0!!.invoke(pm) as Boolean
-                return bytes(b.toString())
-            }
-            return err("isInteractive-not-found")
+            val pm = checkNotNull(ctx.getSystemService(android.os.PowerManager::class.java)) { "no PowerManager" }
+            return bytes(pm.isInteractive.toString())
         } catch (t: Throwable) {
             return err("interactive-failed:" + t.message)
         }
@@ -583,26 +568,6 @@ internal class State(
     }
 
     // ---------- lazy binder/method caches ----------
-    /** Resolved once (thread-safe `lazy`); also wires the methods it probes. */
-    private val powerBinderLazy: Any? by lazy {
-            val svc = asInterface(
-                $$"android.os.IPowerManager$Stub", service("power")
-            )
-            // Probe both overloads exactly once.
-            for (m in svc!!.javaClass.getMethods()) {
-                if ("isInteractive" != m.name) continue
-                val pt = m.getParameterTypes()
-                if (pt.size == 1 && pt[0] == Int::class.javaPrimitiveType && isInteractive1 == null) {
-                    isInteractive1 = m
-                } else if (pt.size == 0 && isInteractive0 == null) {
-                    isInteractive0 = m
-                }
-            }
-            svc
-    }
-
-    private fun powerBinder(): Any? = powerBinderLazy
-
     /** Resolved once (thread-safe `lazy`); also wires the methods it probes. */
     private val activityTaskBinderLazy: Any? by lazy {
         val svc = iActivityTaskManagerOrNull() ?: return@lazy null

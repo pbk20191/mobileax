@@ -14,7 +14,7 @@ import java.nio.charset.StandardCharsets
  * Direct-Binder pm subcommands. Mirrors the surface a developer reaches for
  * after `adb shell pm …` — same calls, no per-command JVM cold-start.
  */
-internal class Pm(private val ctx: Context) {
+internal class Pm(private val ctx: Context, private val ua: android.app.UiAutomation) {
     /** Args: optional flags "3" (third-party only) or "s" (system only).
      * Output columns: package \t label \t sourceDir. Label is the
      * user-visible app name from the manifest; blank for packages whose
@@ -67,6 +67,15 @@ internal class Pm(private val ctx: Context) {
 
     private fun changeRuntimePerm(pkg: String?, perm: String?, grant: Boolean): ByteArray {
         val methodName = if (grant) "grantRuntimePermission" else "revokeRuntimePermission"
+        // The public UiAutomation calls (SDK 28) first; the binders below only
+        // if they refuse.
+        val viaUa = try {
+            if (grant) ua.grantRuntimePermission(pkg, perm) else ua.revokeRuntimePermission(pkg, perm)
+            null
+        } catch (t: Throwable) {
+            t
+        }
+        if (viaUa == null) return ok("ok $methodName $pkg $perm")
         // Permission management moved off IPackageManager onto IPermissionManager
         // around API 30. Try the dedicated service first.
         val candidates = arrayOf(

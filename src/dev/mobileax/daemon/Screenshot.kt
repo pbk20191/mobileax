@@ -673,10 +673,9 @@ internal class Screenshot(private val ua: UiAutomation) {
 
         private fun lookupSourceSize(): Point {
             try {
-                val dmg = Class.forName("android.hardware.display.DisplayManagerGlobal")
-                val inst = dmg.getMethod("getInstance").invoke(null)
-                val d = dmg.getMethod("getRealDisplay", Int::class.javaPrimitiveType)
-                    .invoke(inst, Display.DEFAULT_DISPLAY) as Display
+                val d = checkNotNull(
+                    Binders.appContext().getSystemService(DisplayManager::class.java)?.getDisplay(Display.DEFAULT_DISPLAY)
+                ) { "no default display" }
                 val p = Point()
                 @Suppress("DEPRECATION") // WindowMetrics needs API 30 and a window context
                 d.getRealSize(p)
