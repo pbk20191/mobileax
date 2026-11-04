@@ -6,10 +6,11 @@
 - `am start` goes via `IActivityTaskManager.startActivityAsUser` with
   `callingPackage="com.android.shell"`; the system Context can't host
   `startActivity` from our anonymous process.
-- The instrumentation build (`mobax use --instr`):
+- The instrumentation build (`mobax use`'s default where `mobaxd.apk` is
+  found; `--instr` to insist, `--jar` to skip it):
   - It is an installed APK (`dev.mobileax.daemon`, Android 10 / SDK 29 or
     later). Some OEMs need "Install via USB" (or similar) enabled once
-    before it can be installed. `mobax drop` uninstalls it (`--keep-apk`
+    before it can be installed; until then `use` runs the jar. `mobax drop` uninstalls it (`--keep-apk`
     keeps it).
   - One per device: UiAutomation has one connection. A second
     `mobax use --instr --port N` is refused; a UiAutomator test (or

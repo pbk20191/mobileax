@@ -11,7 +11,7 @@ mobax — drive Android from the shell. Built for LLM agents and humans.
 Usage: mobax [--device SERIAL] [--json] <verb> [args]
 
 The agent loop:
-  mobax use [SERIAL] [--instr]    connect a device, start the daemon (--instr: as an instrumentation APK)
+  mobax use [SERIAL] [--instr|--jar]  connect a device, start the daemon (APK where it installs, else the jar)
   mobax ui                        flat table of tappable nodes (the LLM input format)
   mobax tap \"Continue\"             find by text, tap centre
   mobax tap #back_btn             find by resource-id, tap centre

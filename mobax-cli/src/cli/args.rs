@@ -324,8 +324,8 @@ pub(crate) fn parse_use(rest: &[&str]) -> Result<daemon::ConnectOpts, String> {
                 opts.port = Some(rest.get(i).ok_or("--port needs a value")?
                     .parse().map_err(|_| "invalid --port".to_string())?);
             }
-            "--instr" => opts.instr = true,
-            "--jar" => opts.instr = false,
+            "--instr" => opts.instr = Some(true),
+            "--jar" => opts.instr = Some(false),
             serial if !serial.starts_with('-') && opts.serial.is_none() => {
                 opts.serial = Some(serial.to_string());
             }

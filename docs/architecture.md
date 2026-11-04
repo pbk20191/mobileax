@@ -16,10 +16,12 @@ mobax <verb> ──► adb server ─────►     MobaxServer → Dispatc
 The daemon runs as the shell UID via `app_process` with hidden-API
 restrictions lifted.
 
-There is a second build of the same daemon, started with `mobax use --instr`
-(or `MOBAX_DAEMON=instr`): an installed APK (`dev.mobileax.daemon`) run as an
-instrumentation. `use --instr` installs it when the device's copy isn't this
-build and starts `am instrument -w --no-hidden-api-checks …
+There is a second build of the same daemon, and `mobax use` prefers it where
+`mobaxd.apk` sits next to the jar and the device runs Android 10+: an
+installed APK (`dev.mobileax.daemon`) run as an instrumentation. If it can't
+be installed (no "Install via USB") or doesn't start, `use` falls back to the
+jar; `use --instr|--jar` (or `MOBAX_DAEMON=instr|jar`) picks one. `use`
+installs it when the device's copy isn't this build and starts `am instrument -w --no-hidden-api-checks …
 /.MobaxInstrumentation`. UiAutomation comes from the framework (shared with
 UiAutomator's `UiDevice`), shell permissions are adopted
 (`adoptShellPermissionIdentity`), and what needs the shell uid itself

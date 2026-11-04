@@ -1,9 +1,10 @@
 // connect / disconnect / devices — manages the on-device mobileax daemon
-// lifecycle from the host. Two builds of the same daemon: the jar (push it,
-// start it with app_process as the shell uid; the default) and the APK
-// (install it when the device's copy isn't this build, start it with
-// `am instrument`; `use --instr` or MOBAX_DAEMON=instr). Disconnect stops
-// either and removes both.
+// lifecycle from the host. Two builds of the same daemon: the APK (install
+// it when the device's copy isn't this build, start it with `am instrument`;
+// the default where it's found and the device runs Android 10+) and the jar
+// (push it, start it with app_process as the shell uid; the fallback when
+// the APK can't be installed or started). `use --instr|--jar` or
+// MOBAX_DAEMON=instr|jar picks one. Disconnect stops either and removes both.
 
 use std::io;
 use std::io::{Read, Write};
@@ -276,14 +277,22 @@ fn adb_ok(serial: Option<&str>, args: &[&str], what: &str) -> io::Result<String>
 pub(crate) struct ConnectOpts {
     pub serial: Option<String>,
     pub port: Option<u16>,
-    /// Start the instrumentation APK instead of the app_process jar.
-    pub instr: bool,
+    /// The instrumentation APK (true) or the app_process jar (false); None
+    /// tries the APK and falls back to the jar.
+    pub instr: Option<bool>,
 }
 
-/// `MOBAX_DAEMON=instr` picks the instrumentation APK where `use` isn't told.
-pub(crate) fn instr_default() -> bool {
-    std::env::var("MOBAX_DAEMON").is_ok_and(|v| v == "instr")
+/// `MOBAX_DAEMON=instr|jar` picks the build where `use` isn't told.
+pub(crate) fn instr_default() -> Option<bool> {
+    match std::env::var("MOBAX_DAEMON").as_deref() {
+        Ok("instr") => Some(true),
+        Ok("jar") => Some(false),
+        _ => None,
+    }
 }
+
+/// The APK's minSdk: older devices get the jar.
+const INSTR_MIN_SDK: u32 = 29;
 
 #[derive(Debug, Clone)]
 pub(crate) struct DisconnectOpts {
@@ -309,13 +318,35 @@ pub(crate) fn connect(opts: &ConnectOpts) -> io::Result<(String, u16)> {
     // one goes through the adb server and binds no host port.
     remove_daemon_forwards(&serial);
 
-    if opts.instr {
-        return connect_instr(serial, port);
+    match opts.instr {
+        Some(true) => return connect_instr(serial, port),
+        Some(false) => {}
+        None => {
+            // Fast path: the daemon already answers (either build). The common
+            // case when scripts re-run `mobax use` defensively before each step.
+            if ping_daemon(&serial, port).is_ok() {
+                write_current(&serial);
+                let _ = state_cache::spawn_detached(&serial, port);
+                return Ok((serial, port));
+            }
+            let sdk = device_sh(&serial, "getprop ro.build.version.sdk").trim().parse::<u32>().unwrap_or(0);
+            if locate_apk().is_ok() && sdk >= INSTR_MIN_SDK {
+                match connect_instr(serial.clone(), port) {
+                    Ok(r) => return Ok(r),
+                    // Another instance holds the device: the jar would cut it off too.
+                    Err(e) if e.kind() == io::ErrorKind::AddrInUse => return Err(e),
+                    // Install blocked (no "Install via USB"), or it didn't start.
+                    Err(e) => eprintln!("mobax: instrumentation daemon unavailable, using the jar: {}",
+                        e.to_string().lines().next().unwrap_or_default()),
+                }
+            }
+        }
     }
 
-    // Fast path: the daemon already answers (either build). The common case when scripts
-    // re-run `mobax use` defensively before each step.
-    if ping_daemon(&serial, port).is_ok() {
+    // Fast path: `--jar` and the jar daemon already answers.
+    if opts.instr == Some(false) && ping_daemon(&serial, port).is_ok()
+        && !device_sh(&serial, "pidof mobaxd").trim().is_empty()
+    {
         write_current(&serial);
         let _ = state_cache::spawn_detached(&serial, port);
         return Ok((serial, port));
@@ -429,7 +460,7 @@ fn connect_instr(serial: String, port: u16) -> io::Result<(String, u16)> {
 
 fn refuse_other_port(serial: &str, port: u16, running: Option<u16>) -> io::Result<()> {
     match running {
-        Some(r) if r != port => Err(io::Error::other(format!(
+        Some(r) if r != port => Err(io::Error::new(io::ErrorKind::AddrInUse, format!(
             "daemon already running on {serial} at port {r}; one per device — run `mobax drop` first"
         ))),
         _ => Ok(()),
