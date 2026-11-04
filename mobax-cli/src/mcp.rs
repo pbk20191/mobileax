@@ -423,8 +423,10 @@ impl Engine {
             }
             None => self.observe_stepwise(t, conn, seq, b, had_rows, deadline, &mut parts)?,
         };
-        // A launching app shows its starting window first: wait for content.
-        while transitional(&dump, had_rows) && Instant::now() < deadline {
+        // A launching app shows its starting window first: wait for content,
+        // longer than the settle itself (a cold start under load is slow).
+        let launch_deadline = started + Duration::from_millis(b.timeout_ms.max(b.launch_ms) as u64);
+        while transitional(&dump, had_rows) && Instant::now() < launch_deadline {
             let Some(since) = event_seq(conn) else { break };
             match settle_dump(conn, since, 300, b)? {
                 Some((_, _, d)) => dump = d,
@@ -444,14 +446,8 @@ impl Engine {
             }
             mark("second look", &mut parts);
         }
-        let ms = started.elapsed().as_millis();
-        let note = if still_moving {
-            format!("still changing after {ms} ms")
-        } else if reacted {
-            format!("settled in {ms} ms")
-        } else {
-            "no reaction on screen".to_string()
-        };
+        let loading = transitional(&dump, had_rows);
+        let note = settle_note(started.elapsed().as_millis(), still_moving, reacted, loading);
         let note = if std::env::var_os("MOBAX_TIMING").is_some() {
             format!("{note} [{}]", parts.join(" · "))
         } else {
@@ -695,6 +691,24 @@ struct Settle {
     /// After a settle that changed nothing visible, wait this long for a
     /// late screen (0: don't).
     second_look_ms: u32,
+    /// How long, in all, to wait while the screen is a starting window or
+    /// empty (an app launching); below [Settle::timeout_ms] it changes nothing.
+    launch_ms: u32,
+}
+
+/// How an action's settle ended, for the reply's first line. [loading]: the
+/// wait ran out on a starting window or an empty screen, so nothing on it
+/// can be acted on yet.
+fn settle_note(ms: u128, still_moving: bool, reacted: bool, loading: bool) -> String {
+    if loading {
+        format!("still loading after {ms} ms: call `wait` for what you need before acting")
+    } else if still_moving {
+        format!("still changing after {ms} ms")
+    } else if reacted {
+        format!("settled in {ms} ms")
+    } else {
+        "no reaction on screen".to_string()
+    }
 }
 
 /// An app launch takes a few hundred ms to show anything and arrives in
@@ -704,10 +718,10 @@ struct Settle {
 /// runs for taps that do nothing.
 fn settle_budget(verb: &str) -> Settle {
     match verb {
-        "open" => Settle { first_ms: 3000, idle_ms: 300, timeout_ms: 6000, second_look_ms: 0 },
-        "tap" | "go" => Settle { first_ms: 500, idle_ms: 200, timeout_ms: 3000, second_look_ms: 400 },
-        "swipe" => Settle { first_ms: 300, idle_ms: 200, timeout_ms: 2000, second_look_ms: 0 },
-        _ => Settle { first_ms: 300, idle_ms: 150, timeout_ms: 1500, second_look_ms: 0 },
+        "open" => Settle { first_ms: 3000, idle_ms: 300, timeout_ms: 6000, second_look_ms: 0, launch_ms: 15_000 },
+        "tap" | "go" => Settle { first_ms: 500, idle_ms: 200, timeout_ms: 3000, second_look_ms: 400, launch_ms: 6000 },
+        "swipe" => Settle { first_ms: 300, idle_ms: 200, timeout_ms: 2000, second_look_ms: 0, launch_ms: 0 },
+        _ => Settle { first_ms: 300, idle_ms: 150, timeout_ms: 1500, second_look_ms: 0, launch_ms: 0 },
     }
 }
 
@@ -1427,6 +1441,26 @@ fn now_ns() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_launch_still_loading_at_the_deadline_is_not_settled() {
+        let n = settle_note(6829, false, true, true);
+        assert!(n.starts_with("still loading after 6829 ms"), "{n}");
+        assert!(n.contains("wait"), "{n}");
+        assert_eq!(settle_note(900, false, true, false), "settled in 900 ms");
+        assert_eq!(settle_note(900, true, true, false), "still changing after 900 ms");
+        assert_eq!(settle_note(900, false, false, false), "no reaction on screen");
+    }
+
+    #[test]
+    fn open_waits_long_enough_for_a_cold_start_under_load() {
+        // A loaded emulator took >6.8 s to draw Settings from a cold start.
+        // Only the launch wait grows: a screen that never stops animating
+        // still ends the settle at timeout_ms.
+        let b = settle_budget("open");
+        assert!(b.launch_ms >= 15_000);
+        assert_eq!(b.timeout_ms, 6000);
+    }
 
     #[test]
     fn base64_matches_rfc4648() {
