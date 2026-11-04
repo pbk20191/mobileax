@@ -174,7 +174,8 @@ def main():
                                   if not os.path.basename(f).startswith("baseline"))
     scenarios = [json.load(open(f, encoding="utf-8")) for f in files]
 
-    client = McpClient(a.mobax, a.device)
+    exe = a.mobax if os.path.dirname(a.mobax) == "" else os.path.abspath(a.mobax)
+    client = McpClient(exe, a.device)
     try:
         tools = approx_tokens(client.tools_list_text())
         adb = adb_runner(a.device, a.adb)
