@@ -1266,6 +1266,34 @@ fn call_tool(name: &str, args: &Value, engine: &Engine, device: Option<&str>, br
             r
         }
     };
+    // A tap whose target isn't drawn yet (an app still loading, a dialog
+    // sliding in): if the screen is moving, let it settle and look once more.
+    // A still screen fails at once, as before.
+    let by_target = name == "tap" && s("target").is_some_and(|t| row_ref(&t).is_none());
+    let (ok, text) = if !ok && by_target && text.contains("NOT_FOUND") && engine.in_process() {
+        // Look again each time the screen moves and settles: a dialog from
+        // another process can draw after a quiet gap. Stop at the first
+        // window with no events (the screen is still) or at the cap.
+        let started = Instant::now();
+        let mut last = (ok, text);
+        while started.elapsed() < Duration::from_millis(TAP_WAIT_CAP_MS) {
+            let seq = engine.run(dev, &["do".to_string(), "event_seq".to_string()]).1;
+            let Some(n) = seq.trim().strip_prefix("seq=").and_then(|n| n.parse::<u64>().ok()) else { break };
+            let wire = format!("settle since={n} first_ms={TAP_MOVING_MS} idle_ms=300 timeout_ms={TAP_WAIT_CAP_MS}");
+            if !moved_then_settled(&engine.run(dev, &["do".to_string(), wire]).1) {
+                break;
+            }
+            let again = engine.act(dev, &argv, observe, brief);
+            if again.0 {
+                last = (true, format!("waited {} ms for the screen to settle\n{}", started.elapsed().as_millis(), again.1));
+                break;
+            }
+            last = again;
+        }
+        last
+    } else {
+        (ok, text)
+    };
     let text = match scrolled {
         Some(Scrolled { times: 0, found: true }) | None => text,
         Some(Scrolled { times, found: true }) => format!("scrolled {times}×\n{text}"),
@@ -1288,6 +1316,20 @@ fn call_tool(name: &str, args: &Value, engine: &Engine, device: Option<&str>, br
         _ => text,
     };
     Ok(Out::Text((ok, text)))
+}
+
+/// How long a missed tap watches for screen events before calling the
+/// screen still (and failing): a tap's second look, since another app's
+/// window (a permission dialog) can be quiet that long before it draws.
+const TAP_MOVING_MS: u32 = 400;
+
+/// The most a missed tap spends waiting on a moving screen.
+const TAP_WAIT_CAP_MS: u64 = 4000;
+
+/// The `settle` reply after a missed tap: the screen was moving and has
+/// settled (or never stopped within the cap), so the target may be there now.
+fn moved_then_settled(reply: &str) -> bool {
+    reply.contains("changed=1") || reply.contains("TIMEOUT:settle")
 }
 
 /// A target with no selector syntax: one word, read as a class name.
@@ -1750,6 +1792,17 @@ mod tests {
     fn a_missed_bare_word_that_is_on_screen_as_text_gets_a_hint() {
         let h = class_word_hint("다음");
         assert!(h.contains(r#":has-text("다음")"#) && h.contains("class"), "{h}");
+    }
+
+    #[test]
+    fn a_missed_tap_is_retried_only_if_the_screen_was_moving() {
+        // Quiet screen: the target really isn't there; fail now.
+        assert!(!moved_then_settled("ok elapsed=150 changed=0"));
+        // It was drawing and has settled: look again.
+        assert!(moved_then_settled("ok elapsed=840 changed=1"));
+        // Still moving at the cap: look once more anyway.
+        assert!(moved_then_settled("ERR:TIMEOUT:settle:idle_ms=300 timeout_ms=4000"));
+        assert!(!moved_then_settled("ERR:DEVICE_GONE:x"));
     }
 
     #[test]

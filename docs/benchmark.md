@@ -107,7 +107,7 @@ within ±5% on the total (+3.6%, +2.7%) with identical calls:
 | s1 | Settings → "디스플레이 및 터치" | basic navigation |
 | s2 | Accessibility list, last item (`tap` with `scroll: true`; the baseline used 4 swipes) | scrolling (later: find-with-scroll) |
 | s3 | Settings search "배터리" → result | typing, result check |
-| s4 | Fresh camera: location-tag prompt, location permission | popups (later: auto-handling) |
+| s4 | Fresh camera: location-tag prompt, location permission (no `wait`: a missed tap looks again while the screen moves) | popups (later: auto-handling) |
 | s5 | Recents (two fixed cards), one `ui` | output size of a full-screen system UI |
 
 Findings from writing the scenarios:
@@ -127,3 +127,5 @@ Findings from writing the scenarios:
 | Tool description diet (`mcp/tool-diet`): shared arguments (`device`, `observe`, `timeout_ms`) explained once in the instructions; descriptions no longer repeat the instructions; no empty `required` | ±0 | ±0 (noise) | 2979 → 1959 (−34%): tools/list 2668 → 1605, instructions 311 → 354 |
 | The server rejects unknown arguments itself (naming the ones the tool takes), so schemas drop `additionalProperties:false` | ±0 | ±0 | 1959 → 1820 (−39% overall): tools/list 1605 → 1466 |
 | `tap`/`find` `scroll: true` (pages the biggest list with ACTION_SCROLL_FORWARD until the target shows); s2 now uses it | s2 8 → 4 | s2 1847 → 673 (−64%) | tools/list 1466 → 1513 (+47 for the argument) |
+| A missed `tap` looks again while the screen is moving (400 ms with no events = still, fail at once; at most 4 s); s2 and s4 drop their `wait` steps; s1 setup also closes Settings search | s2 4 → 3, s4 5 → 4 | s4 526 → 339; every scenario 0% run-to-run spread | ±0 |
+| **All of the above vs the baseline** | **24 → 18** | **4581 → 3211 (−30%)** | **2979 → 1867 (−37%)** |

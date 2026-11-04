@@ -23,12 +23,6 @@
    }
   },
   {
-   "tool": "wait",
-   "args": {
-    "target": "확대"
-   }
-  },
-  {
    "tool": "tap",
    "args": {
     "target": ":has-text(\"텍스트 음성 변환 출력\")",
