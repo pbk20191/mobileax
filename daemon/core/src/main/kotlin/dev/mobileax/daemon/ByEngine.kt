@@ -198,6 +198,74 @@ internal class ByEngine(private val ua: UiAutomation, private val ctx: Context, 
         return ok("ok drag ${from.x},${from.y} -> ${to[0]},${to[1]}")
     }
 
+    // ── dialogs and the keyboard (`go accept|dismiss|hide_keyboard`) ───
+
+    /**
+     * Answers the dialog on screen, told apart as Appium does: a runtime
+     * permission prompt (`…:id/permission_message`; its first allow or deny
+     * button, Android's own order: "while using the app" before "only this
+     * time") or an alert (`…:id/alertTitle|alert_title|custom`; button1 to
+     * accept, button2 to dismiss, the only one when there is one); failing
+     * those, a window smaller than the screen ([dialogButtons]).
+     */
+    fun dialog(accept: Boolean): ByteArray {
+        val verb = if (accept) "accept" else "dismiss"
+        val button: UiObject2? = if (device.hasObject(By.res(Pattern.compile(".+:id/permission_message")))) {
+            val word = if (accept) "allow" else "deny"
+            device.findObjects(By.res(Pattern.compile(".+:id/permission_\\w+_button")))
+                .firstOrNull { b -> b.resourceName?.substringAfter(":id/")?.split('_')?.contains(word) == true }
+        } else if (device.hasObject(By.res(Pattern.compile(".+:id/(alertTitle|alert_title|custom|message)")))) {
+            // One button (an OK-only notice) closes it either way.
+            val order = if (accept) listOf("button1") else listOf("button2", "button3", "button1")
+            order.firstNotNullOfOrNull { id -> device.findObject(By.res(Pattern.compile(".+:id/$id"))) }
+        } else {
+            val row = dialogButtons() ?: return err("NOT_FOUND", "$verb: no dialog on screen")
+            // Material puts confirm on the right, dismiss on the left.
+            if (accept) row.last() else row.first()
+        }
+        val b = button ?: return err("NOT_FOUND", "$verb: the dialog has no button for it")
+        val label = labelOf(b) ?: b.resourceName
+        b.click()
+        return ok("ok $verb \"$label\"")
+    }
+
+    /**
+     * A dialog with no framework ids (Compose's AlertDialog, custom ones):
+     * the active app window, smaller than the screen, with text that isn't a
+     * button (a title or message; a popup menu is all items). Its buttons are the
+     * labelled clickable nodes in its bottom row, left to right.
+     */
+    private fun dialogButtons(): List<UiObject2>? {
+        val screen = android.graphics.Point()
+        @Suppress("DEPRECATION")
+        ctx.getSystemService(android.hardware.display.DisplayManager::class.java)
+            ?.getDisplay(android.view.Display.DEFAULT_DISPLAY)?.getRealSize(screen)
+        val win = device.findWindows(By.Window.type(AccessibilityWindowInfo.TYPE_APPLICATION).active(true))
+            .maxByOrNull { it.layer } ?: return null
+        val wb = win.visibleBounds
+        if (screen.y <= 0 || (wb.width() >= screen.x && wb.height() >= screen.y * 9 / 10)) return null
+        // A title or message that isn't a button: not a popup menu, all items.
+        if (!win.hasObject(By.clickable(false).text(Pattern.compile(".+", Pattern.DOTALL)))) return null
+        val labelled = win.findObjects(By.clickable(true)).filter { labelOf(it) != null }
+        if (labelled.isEmpty()) return null
+        val bottom = labelled.maxOf { it.visibleBounds.top }
+        val rowHeight = labelled.first { it.visibleBounds.top == bottom }.visibleBounds.height()
+        return labelled.filter { it.visibleBounds.top >= bottom - rowHeight / 2 }.sortedBy { it.visibleCenter.x }
+    }
+
+    /** What a button says: its text or description, or (Compose) a labelled child's. */
+    private fun labelOf(o: UiObject2): String? =
+        o.text?.takeIf { it.isNotEmpty() } ?: o.contentDescription?.takeIf { it.isNotEmpty() }
+            ?: o.findObject(By.text(Pattern.compile(".+", Pattern.DOTALL)))?.text
+
+    /** Back closes the soft keyboard, only while it is up (else it would leave the screen). */
+    fun hideKeyboard(back: () -> Unit): ByteArray {
+        val up = ua.windows.orEmpty().any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+        if (!up) return ok("ok no keyboard")
+        back()
+        return ok("ok keyboard hidden")
+    }
+
     // ── output ──────────────────────────────────────────────────────────
 
     private fun nodes(found: List<UiObject2>): ByteArray {

@@ -66,6 +66,12 @@ up          x=NUM y=NUM                                  releases the down point
 scroll      x=NUM y=NUM dy=NUM                           wheel scroll at point
 key         NAME                                         e.g. BACK, HOME, ENTER
 key         code=N                                       raw KeyEvent code
+key         ACCEPT | DISMISS                             answer the dialog on screen (`go accept|dismiss`):
+                                                         a permission prompt's first allow/deny button,
+                                                         an alert's button1/button2, else (Compose,
+                                                         custom) the bottom row of a window smaller
+                                                         than the screen: right accepts, left dismisses
+key         HIDE_KEYBOARD                                back, only while the soft keyboard is up
                                                          key/scroll take wait=0: don't wait for the
                                                          window to handle it or for animations to
                                                          end (a live viewer; Back in Recents took 5 s)

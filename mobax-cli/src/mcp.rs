@@ -964,7 +964,7 @@ fn build_tools() -> Vec<Tool> {
         },
         Tool {
             name: "tap",
-            description: "Tap a target (@N, text, #resource_id, selector) or x,y.",
+            description: "Tap a target (@N, text, #id, selector) or x,y.",
             schema: obj(&[r#""target":{"type":"string"}"#, SCROLL, r#""x":{"type":"integer"}"#, r#""y":{"type":"integer"}"#, DISPLAY, TIMEOUT, OBSERVE, DEVICE], &[]),
         },
         Tool {
@@ -974,7 +974,7 @@ fn build_tools() -> Vec<Tool> {
         },
         Tool {
             name: "fill",
-            description: "Set an edit field's text in one step. selector: @N, #resource_id, selector, or the field's label.",
+            description: "Set a field's text in one step. selector: @N, #resource_id, selector, or its label.",
             schema: obj(&[r#""selector":{"type":"string"}"#, r#""text":{"type":"string"}"#, OBSERVE, DEVICE], &["selector", "text"]),
         },
         Tool {
@@ -984,7 +984,7 @@ fn build_tools() -> Vec<Tool> {
         },
         Tool {
             name: "go",
-            description: "Press a key: back, home, recents, enter, menu, …",
+            description: "Key: back, home, recents, enter…, accept / dismiss (dialog), hide_keyboard.",
             schema: obj(&[r#""key":{"type":"string"}"#, OBSERVE, DEVICE], &["key"]),
         },
         Tool {

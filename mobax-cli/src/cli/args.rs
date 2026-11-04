@@ -727,7 +727,7 @@ pub(crate) fn parse_args(args: &[String]) -> Result<Opts, String> {
             }
         }
         Some((&"go", rest)) => {
-            let k = rest.first().ok_or("go needs KEY (back|home|recents|enter|…)")?;
+            let k = rest.first().ok_or("go needs KEY (back|home|recents|enter|…|accept|dismiss|hide_keyboard)")?;
             Cmd::Input(format!("key {}", k.to_uppercase()))
         }
         Some((&"swipe", rest)) => {

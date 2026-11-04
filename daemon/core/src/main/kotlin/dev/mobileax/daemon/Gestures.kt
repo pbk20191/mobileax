@@ -141,6 +141,11 @@ internal class Gestures(private val h: Server.Handlers) {
                     swipe(a.x, a.y, a.x, a.y - dy, 120, a.wait); OK
                 }
                 "key" -> when {
+                    // Not keys: what `go accept|dismiss|hide_keyboard` asks for.
+                    a.keyName == "ACCEPT" || a.keyName == "DISMISS" ->
+                        withContext(Loop.Blocking) { h.by.dialog(a.keyName == "ACCEPT") }
+                    a.keyName == "HIDE_KEYBOARD" ->
+                        withContext(Loop.Blocking) { h.by.hideKeyboard { h.input.key(android.view.KeyEvent.KEYCODE_BACK, a.wait) } }
                     a.code != 0 -> { withContext(Loop.Work) { h.input.key(a.code, a.wait) }; OK }
                     a.keyName != null -> { withContext(Loop.Work) { h.input.keyByName(a.keyName, a.wait) }; OK }
                     else -> Server.errBytes("key-needs-name-or-code")
