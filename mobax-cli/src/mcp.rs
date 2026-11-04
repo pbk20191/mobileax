@@ -866,13 +866,36 @@ const DEVICE: &str = r#""device":{"type":"string"}"#;
 const TIMEOUT: &str = r#""timeout_ms":{"type":"integer"}"#;
 const OBSERVE: &str = r#""observe":{"type":"boolean"}"#;
 
-fn tools() -> Vec<Tool> {
+/// The tool list, built once (its schemas are leaked strings).
+fn tools() -> &'static [Tool] {
+    static TOOLS: std::sync::OnceLock<Vec<Tool>> = std::sync::OnceLock::new();
+    TOOLS.get_or_init(build_tools)
+}
+
+/// An argument [name] doesn't take (a batch step's own `tool` aside), and
+/// the ones it does. The server checks this itself, so the schemas can
+/// leave out `additionalProperties`.
+fn unknown_arg(name: &str, args: &Value) -> Option<(String, Vec<String>)> {
+    let tool = tools().iter().find(|t| t.name == name)?;
+    let schema = json::parse(tool.schema).ok()?;
+    let props = json::obj_get(&schema, "properties")?;
+    let Value::Obj(known) = props else { return None };
+    let known: Vec<String> = known.iter().map(|(k, _)| k.clone()).collect();
+    let Value::Obj(given) = args else { return None };
+    given
+        .iter()
+        .map(|(k, _)| k)
+        .find(|k| k.as_str() != "tool" && !known.contains(k))
+        .map(|k| (k.clone(), known))
+}
+
+fn build_tools() -> Vec<Tool> {
     // Schemas are assembled at startup from the shared fragments above.
     fn obj(props: &[&str], required: &[&str]) -> &'static str {
         let req: Vec<String> = required.iter().map(|r| format!("\"{r}\"")).collect();
         let req = if req.is_empty() { String::new() } else { format!(r#","required":[{}]"#, req.join(",")) };
         Box::leak(
-            format!(r#"{{"type":"object","properties":{{{}}}{req},"additionalProperties":false}}"#, props.join(","))
+            format!(r#"{{"type":"object","properties":{{{}}}{req}}}"#, props.join(","))
                 .into_boxed_str(),
         )
     }
@@ -1029,6 +1052,9 @@ fn call_tool(name: &str, args: &Value, engine: &Engine, device: Option<&str>, br
     let n = |k: &str| json::obj_get(args, k).and_then(json::as_num);
     let b = |k: &str| matches!(json::obj_get(args, k), Some(Value::Bool(true)));
     let need = |k: &str| s(k).ok_or_else(|| (-32602, format!("{name}: missing \"{k}\"")));
+    if let Some((k, known)) = unknown_arg(name, args) {
+        return Err((-32602, format!("{name}: unknown argument \"{k}\"; it takes {}", known.join(", "))));
+    }
     // Actions report what changed unless the caller opts out.
     let observe = !matches!(json::obj_get(args, "observe"), Some(Value::Bool(false)));
     let device = s("device").or_else(|| device.map(str::to_string));
@@ -1234,6 +1260,13 @@ fn batch(args: &Value, engine: &Engine) -> Reply {
     let steps = json::obj_get(args, "steps").and_then(json::as_arr).unwrap_or(&[]);
     if steps.is_empty() || steps.len() > BATCH_MAX {
         return (false, format!("ERR:BAD_ARG:batch needs 1 to {BATCH_MAX} steps"));
+    }
+    // A typo anywhere stops the batch before its first step runs.
+    for step in steps {
+        let name = json::obj_get(step, "tool").and_then(json::as_str).unwrap_or("");
+        if let Some((k, known)) = unknown_arg(name, step) {
+            return (false, format!("ERR:BAD_ARG:{name}: unknown argument \"{k}\"; it takes {}", known.join(", ")));
+        }
     }
     if !engine.in_process() {
         return (false, "ERR:PRECONDITION:batch needs the daemon reachable through the local adb server".into());
@@ -1538,7 +1571,7 @@ mod tests {
         // JSON spacing; the raw reply here is a little smaller). Raise only with a reason.
         let list = handle(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#, &Engine::new(&[])).unwrap();
         let cost = approx_tokens(INSTRUCTIONS) + approx_tokens(&list);
-        assert!(cost <= 2100, "instructions + tools/list = {cost} approx tokens");
+        assert!(cost <= 1900, "instructions + tools/list = {cost} approx tokens");
     }
 
     #[test]
@@ -1588,6 +1621,18 @@ mod tests {
         assert!(r.contains("BAD_ARG") && r.contains(r#""isError":true"#), "{r}");
         let many = vec![r#"{"tool":"go","key":"back"}"#; super::BATCH_MAX + 1].join(",");
         assert!(call(&format!(r#"{{"steps":[{many}]}}"#)).contains("BAD_ARG"));
+    }
+
+    #[test]
+    fn unknown_arguments_are_refused_before_anything_runs() {
+        let call = |name: &str, args: &str| {
+            handle(&format!(r#"{{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{{"name":"{name}","arguments":{args}}}}}"#), &Engine::new(&[])).unwrap()
+        };
+        let r = call("tap", r#"{"targt":"OK"}"#);
+        assert!(r.contains("-32602") && r.contains("targt") && r.contains("target"), "{r}");
+        // A typo in a later step stops the batch before its first step runs.
+        let r = call("batch", r#"{"steps":[{"tool":"go","key":"back"},{"tool":"tap","targt":"OK"}]}"#);
+        assert!(r.contains("BAD_ARG") && r.contains("targt") && r.contains(r#""isError":true"#), "{r}");
     }
 
     #[test]

@@ -125,3 +125,4 @@ Findings from writing the scenarios:
 | Change | Calls | Scenario tokens | Per-session cost |
 |---|---:|---:|---:|
 | Tool description diet (`mcp/tool-diet`): shared arguments (`device`, `observe`, `timeout_ms`) explained once in the instructions; descriptions no longer repeat the instructions; no empty `required` | ±0 | ±0 (noise) | 2979 → 1959 (−34%): tools/list 2668 → 1605, instructions 311 → 354 |
+| The server rejects unknown arguments itself (naming the ones the tool takes), so schemas drop `additionalProperties:false` | ±0 | ±0 | 1959 → 1820 (−39% overall): tools/list 1605 → 1466 |
