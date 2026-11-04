@@ -3,9 +3,6 @@ package dev.mobileax.daemon
 import android.content.ContentResolver
 import android.content.Context
 import android.provider.Settings
-import java.io.BufferedReader
-import java.io.IOException
-import java.io.InputStreamReader
 import java.nio.charset.StandardCharsets
 import java.util.Locale
 
@@ -61,31 +58,17 @@ internal class SettingsApi(ctx: Context) {
 
     private fun execFallback(op: String?, ns: String?, key: String?, value: String?): ByteArray {
         try {
-            val pb = if ("get" == op) {
-                ProcessBuilder("/system/bin/settings", "get", ns, key)
-            } else {
-                ProcessBuilder(
-                    "/system/bin/settings", "put", ns, key,
-                    value ?: ""
-                )
-            }
-            pb.redirectErrorStream(true)
-            val p = pb.start()
-            val sb = StringBuilder()
-            BufferedReader(InputStreamReader(p.inputStream)).use { r ->
-                var line: String?
-                while ((r.readLine().also { line = it }) != null) sb.append(line).append('\n')
-            }
-            val code = p.waitFor()
-            val out = sb.toString().trim { it <= ' ' }
+            val args = if ("get" == op) listOf("settings", "get", ns ?: "", key ?: "")
+            else listOf("settings", "put", ns ?: "", key ?: "", value ?: "")
+            val r = Shell.runBlocking(Shell.argv(args) + " 2>&1")
+            val code = r.exit
+            val out = r.out.trim { it <= ' ' }
             if (code != 0) return err("settings-exit-" + code + (if (out.isEmpty()) "" else ":$out"))
             return (if ("get" == op)
                 (out.ifEmpty { "null" })
             else
                 "ok").toByteArray(StandardCharsets.UTF_8)
-        } catch (e: IOException) {
-            return err("settings-fallback-failed:" + e.message)
-        } catch (e: InterruptedException) {
+        } catch (e: Exception) {
             return err("settings-fallback-failed:" + e.message)
         }
     }

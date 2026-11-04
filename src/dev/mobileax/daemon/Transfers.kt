@@ -7,14 +7,12 @@ import android.content.pm.PackageInstaller
 import android.os.Binder
 import android.os.IBinder
 import android.os.Parcel
-import android.system.Os
+import android.os.ParcelFileDescriptor
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
-import java.io.FileInputStream
-import java.io.FileOutputStream
 import java.io.IOException
 import java.io.OutputStream
 import kotlin.time.Duration.Companion.milliseconds
@@ -81,63 +79,75 @@ internal class Transfers(private val ctx: Context, private val installer: Instal
         }
     }
 
+    /** Streams [path] as the shell (our app uid can't read most paths). A
+     *  file that can't be opened fails with ERR before any bytes. */
     suspend fun pull(c: Conn, path: String?) {
         if (path == null) return c.errAndEnd("pull-needs-path")
-        val f = File(path)
-        // exists/isDirectory can stall on FUSE-backed storage: ask on Work.
-        val (exists, isDir) = withContext(Loop.Work) { f.exists() to f.isDirectory }
-        if (!exists) return c.errAndEnd("not-found:$path")
-        if (isDir) return c.errAndEnd("is-directory:$path")
-        var input: FileInputStream? = null
+        val q = Shell.quote(path)
+        val p = try {
+            withContext(Loop.Blocking) { Shell.open("( [ -e $q ] || exit $NOT_FOUND; [ -d $q ] && exit $IS_DIR; exec cat $q )") }
+        } catch (e: Exception) {
+            return c.errAndEnd("pull-failed:${e.message}")
+        }
         var sent = 0L
         try {
-            input = withContext(Loop.Work) { FileInputStream(f) }
+            val input = ParcelFileDescriptor.AutoCloseInputStream(p.stdout)
             while (true) {
                 val buf = ByteArray(CHUNK)
-                val n = withContext(Loop.Work) { input.read(buf) }
+                val n = withContext(Loop.Blocking) { input.read(buf) }
                 if (n <= 0) break
                 c.send(buf, 0, n)
                 sent += n
             }
-            c.sendRaw(END)
+            val code = p.exitCode()
+            when {
+                // Clients read ERR only as the first frame, so a failure
+                // after data can only end the stream.
+                code == 0 || sent > 0 -> c.sendRaw(END)
+                code == NOT_FOUND -> c.errAndEnd("not-found:$path")
+                code == IS_DIR -> c.errAndEnd("is-directory:$path")
+                else -> c.errAndEnd("read-failed:" + p.errOutput.trim().ifEmpty { "exit $code" })
+            }
         } catch (e: IOException) {
-            // Unreadable (Permission denied): say so instead of a 0-byte
-            // success. Clients read ERR only as the first frame, so a failure
-            // after data can only end the stream.
             if (c.closed) throw e
             Logx.w("pull failed", e)
             if (sent == 0L) c.send(("ERR:read-failed:" + e.message).toByteArray(Charsets.UTF_8))
             c.sendRaw(END)
         } finally {
-            input?.let { i -> withContext(NonCancellable + Loop.Work) { try { i.close() } catch (_: IOException) {} } }
+            p.kill()
         }
     }
 
+    /** Writes the inbound chunks to [path] as the shell. */
     suspend fun push(c: Conn, path: String, mode: Int, expectedSize: Long): ByteArray {
-        val parent = File(path).parentFile
-        if (parent != null && !withContext(Loop.Work) { parent.isDirectory }) {
+        val q = Shell.quote(path)
+        val parent = File(path).parent
+        val dirCheck = if (parent != null) "[ -d ${Shell.quote(parent)} ] || exit $NOT_FOUND; " else ""
+        val chmod = if (mode > 0) " && chmod ${Integer.toOctalString(mode)} $q" else ""
+        val p = try {
+            withContext(Loop.Blocking) { Shell.open("( ${dirCheck}cat > $q$chmod )", input = Shell.Input.DATA) }
+        } catch (e: Exception) {
             c.drainChunks()
-            return err("parent-missing:$parent")
-        }
-        var out: FileOutputStream? = null
-        try {
-            out = withContext(Loop.Work) { FileOutputStream(path, false) }
-            val received = c.copyChunks(out)
-            withContext(Loop.Work) {
-                out.flush()
-                try { out.fd.sync() } catch (_: IOException) {}
-            }
-            if (mode > 0) {
-                try { Os.chmod(path, mode) } catch (t: Throwable) { return err("chmod-failed:${t.message}") }
-            }
-            if (expectedSize > 0 && received != expectedSize) {
-                return err("size-mismatch:got=$received:want=$expectedSize")
-            }
-            return ok("ok bytes=$received")
-        } catch (e: IOException) {
             return err("write-failed:${e.message}")
-        } finally {
-            out?.let { o -> withContext(NonCancellable + Loop.Work) { try { o.close() } catch (_: IOException) {} } }
+        }
+        val sink = p.stdin!!
+        var received = 0L
+        var writeErr: IOException? = null
+        try {
+            received = c.copyChunks(sink)
+        } catch (e: IOException) {
+            if (c.closed) { p.kill(); throw e }
+            writeErr = e   // the script stopped reading (it failed): drop the rest
+            c.drainChunks()
+        }
+        withContext(Loop.Blocking) { try { sink.close() } catch (_: IOException) {} }
+        val code = p.exitCode()
+        p.kill()
+        return when {
+            code == NOT_FOUND -> err("parent-missing:$parent")
+            code != 0 -> err("write-failed:" + p.errOutput.trim().ifEmpty { writeErr?.message ?: "exit $code" })
+            expectedSize > 0 && received != expectedSize -> err("size-mismatch:got=$received:want=$expectedSize")
+            else -> ok("ok bytes=$received")
         }
     }
 
@@ -232,6 +242,9 @@ internal class Transfers(private val ctx: Context, private val installer: Instal
 
     private companion object {
         const val CHUNK = 256 * 1024
+        /** Exit codes of the pull/push scripts' own checks. */
+        const val NOT_FOUND = 3
+        const val IS_DIR = 4
         const val MAX_CHUNK = 8 * 1024 * 1024
         val END = byteArrayOf(0, 0, 0, 0)
         fun ok(s: String) = s.toByteArray(Charsets.UTF_8)

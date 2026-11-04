@@ -1,9 +1,7 @@
 package dev.mobileax.daemon
 
-import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.UiAutomation
 import android.content.Context
-import android.hardware.display.DisplayManager
 import android.os.HandlerThread
 import android.os.Looper
 import kotlinx.coroutines.CompletableDeferred
@@ -37,11 +35,11 @@ data object Main {
             Loop.init()
             // ActivityThread.systemMain() binds handlers to the calling thread's
             // looper, so the system context must be created here, on main.
-            Binders.systemContext()
+            ShellContexts.systemContext()
             // systemMain() names us "system_process" to the debugger.
             setDdmAppName("mobaxd")
             // Everything below runs as this: com.android.shell, our uid's package.
-            val ctx = Binders.appContext()
+            val ctx = ShellContexts.appContext()
             Logx.boot("mobaxd context=${ctx.opPackageName}")
             exitWithSystemServer()
 
@@ -91,42 +89,8 @@ data object Main {
             connectedUiAutomation(ht.looper).also { Logx.boot("mobaxd ua-looper=thread") }
         }
         registerShutdownHook(ua)
-        enableInteractiveWindows(ua)
         try { ua.setRunAsMonkey(true) } catch (t: Throwable) { Logx.bootWarn("setRunAsMonkey failed", t) }
-
-        val h = Server.Handlers()
-        h.dumper = Dumper(ua)
-        h.shot = Screenshot(ua).also { it.probeMirror() }
-        h.input = Input(ua)
-        h.sysCtx = context
-        h.installer = Installer(context)
-        h.pm = Pm(context, ua)
-        h.manifest = Manifest(context)
-        h.providers = Providers()
-        h.location = Location()
-        h.notifs = Notifications()
-        h.clip = Clipboard()
-        h.am = Am(context)
-        try { h.props = Props() } catch (t: Throwable) { Logx.bootWarn("Props init failed", t) }
-        h.settings = SettingsApi(context)
-        h.wm = Wm(context.getSystemService(DisplayManager::class.java), ua)
-        h.uiEvents = UiEvents(ua)
-        h.nodes = NodeActions(ua)
-        h.toasts = Toasts(h.uiEvents)
-        h.byStudy = ByStudy(ua, context)
-        h.state = State(context, h.uiEvents)
-
-        // Warm the dump path: the first dump_active on a cold VM costs ~1 s.
-        Loop.scope.launch(Loop.Work) {
-            try {
-                val t0 = System.nanoTime()
-                h.dumper.dumpActive()
-                Logx.i("warmup: dump_active in ${(System.nanoTime() - t0) / 1_000_000}ms")
-            } catch (t: Throwable) {
-                Logx.w("dump_active warmup failed", t)
-            }
-        }
-        Server(h)
+        buildServer(context, ua)
     }
 
     private fun connectedUiAutomation(looper: Looper): UiAutomation {
@@ -146,7 +110,7 @@ data object Main {
             try {
                 val c = UiAutomation::class.java.getDeclaredConstructor(Context::class.java, iConnCls)
                 c.isAccessible = true
-                return c.newInstance(Binders.systemContext(), conn)
+                return c.newInstance(ShellContexts.systemContext(), conn)
             } catch (t: Throwable) {
                 throw IllegalStateException("no usable UiAutomation constructor on SDK ${android.os.Build.VERSION.SDK_INT}", t)
             }
@@ -180,16 +144,6 @@ data object Main {
         } catch (_: NoSuchMethodException) {
         }
         UiAutomation::class.java.getDeclaredMethod("connect").apply { isAccessible = true }.invoke(ua)
-    }
-
-    private fun enableInteractiveWindows(ua: UiAutomation) {
-        try {
-            val info = ua.serviceInfo ?: return
-            info.flags = info.flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
-            ua.serviceInfo = info
-        } catch (t: Throwable) {
-            Logx.bootWarn("enableInteractiveWindows failed", t)
-        }
     }
 
     private fun registerShutdownHook(ua: UiAutomation) {

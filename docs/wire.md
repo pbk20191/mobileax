@@ -13,6 +13,7 @@ commands). `ERR:<msg>` is returned on failure.
 
 ```
 ping                                                  → pong
+ready                                                 → ready (once UiAutomation is connected; `use --instr` waits on it)
 info                                                  → "<srcW> <srcH>"
 quit                                                  → bye   (daemon exits)
 ```

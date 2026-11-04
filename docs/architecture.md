@@ -14,7 +14,24 @@ mobax <verb> ──► adb server ─────►     MobaxServer → Dispatc
 ```
 
 The daemon runs as the shell UID via `app_process` with hidden-API
-restrictions lifted. It listens on the abstract Unix socket `@mobaxd_<port>`
+restrictions lifted.
+
+There is a second build of the same daemon, started with `mobax use --instr`
+(or `MOBAX_DAEMON=instr`): an installed APK (`dev.mobileax.daemon`) run as an
+instrumentation. `use --instr` installs it when the device's copy isn't this
+build and starts `am instrument -w --no-hidden-api-checks …
+/.MobaxInstrumentation`. UiAutomation comes from the framework (shared with
+UiAutomator's `UiDevice`), shell permissions are adopted
+(`adoptShellPermissionIdentity`), and what needs the shell uid itself
+(dumpsys, settings, logcat, `cp`) runs through a framework-started `sh`. It
+exits when its `am instrument` process goes. Gradle builds both as flavors:
+`src/` is shared, `src-shell/` holds the app_process entry point and context
+setup (`build/mobax.jar`), `src-instr/` the instrumentation's
+(`build/mobaxd.apk`). `Shell` is the one interface both implement
+differently: the jar spawns `sh -c` as its own child, the APK goes through
+UiAutomation.
+
+Either build listens on the abstract Unix socket `@mobaxd_<port>`
 (the host opens it through the adb server: `host:transport:SERIAL`, then
 `localabstract:mobaxd_<port>`, with no host port forward) and refuses
 any peer whose `SO_PEERCRED` uid isn't shell or root. The host runs a

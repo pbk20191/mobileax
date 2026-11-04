@@ -1,7 +1,4 @@
-# Entry point: app_process invokes Main.main.
--keep public class dev.mobileax.daemon.Main {
-    public static void main(java.lang.String[]);
-}
+# Both builds. Each keeps its own entry point: proguard-shell.pro, proguard-instr.pro.
 # Allow R8 to rename everything else and re-pack to a single root namespace.
 -allowaccessmodification
 -repackageclasses ''

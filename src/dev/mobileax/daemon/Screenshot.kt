@@ -2,8 +2,6 @@ package dev.mobileax.daemon
 
 import android.annotation.TargetApi
 import android.app.UiAutomation
-import android.content.Context
-import android.content.ContextWrapper
 import android.graphics.Bitmap
 import android.graphics.Bitmap.CompressFormat
 import android.graphics.ColorSpace
@@ -18,7 +16,6 @@ import android.view.Display
 import dev.mobileax.daemon.Loop.mainHandler
 import java.io.BufferedReader
 import java.io.ByteArrayOutputStream
-import java.io.InputStreamReader
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.concurrent.Volatile
@@ -541,26 +538,9 @@ internal class Screenshot(private val ua: UiAutomation) {
         private fun initDisplayManager(): DisplayManager? {
             // Android 14+ rejects createVirtualDisplay when the Context's
             // op-package name doesn't map to the calling UID ("packageName
-            // must match the calling uid"). The daemon's Application is
-            // com.android.shell, our uid's package; only if building it failed
-            // (the system context, "android") is the name forced here.
-            var base = Binders.appContext()
-            var chosen = "app context"
-            if ("com.android.shell" != base.opPackageName) {
-                val inner = base
-                base = object : ContextWrapper(inner) {
-                    override fun getPackageName(): String {
-                        return "com.android.shell"
-                    }
-
-                    override fun getOpPackageName(): String {
-                        return "com.android.shell"
-                    }
-                }
-                chosen += " + wrapper"
-            }
-            Logx.i("screenshot: display ctx = $chosen, op=${base.opPackageName}")
-            return base.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager?
+            // must match the calling uid"): [ctx] is our uid's package.
+            Logx.i("screenshot: display ctx op=${ctx.opPackageName}")
+            return ctx.getSystemService(DisplayManager::class.java)
         }
 
         /** Walk `dumpsys window windows` for the first visible window
@@ -568,15 +548,8 @@ internal class Screenshot(private val ua: UiAutomation) {
          * short name (e.g. `com.bank.app/.LoginActivity`) or null.  */
         private fun findSecureWindow(): String? {
             try {
-                val p = Runtime.getRuntime().exec(
-                    arrayOf("dumpsys", "window", "windows")
-                )
-                BufferedReader(
-                    InputStreamReader(
-                        p.inputStream,
-                        StandardCharsets.UTF_8
-                    )
-                ).use { r ->
+                val dump = Shell.runBlocking("dumpsys window windows").out
+                BufferedReader(dump.reader()).use { r ->
                     var currentWin: String? = null
                     var line: String?
                     while ((r.readLine().also { line = it }) != null) {
@@ -597,7 +570,6 @@ internal class Screenshot(private val ua: UiAutomation) {
                         }
                     }
                 }
-                p.waitFor()
             } catch (_: Throwable) {
             }
             return null
@@ -674,7 +646,7 @@ internal class Screenshot(private val ua: UiAutomation) {
         private fun lookupSourceSize(): Point {
             try {
                 val d = checkNotNull(
-                    Binders.appContext().getSystemService(DisplayManager::class.java)?.getDisplay(Display.DEFAULT_DISPLAY)
+                    ctx.getSystemService(DisplayManager::class.java)?.getDisplay(Display.DEFAULT_DISPLAY)
                 ) { "no default display" }
                 val p = Point()
                 @Suppress("DEPRECATION") // WindowMetrics needs API 30 and a window context

@@ -65,9 +65,8 @@ internal class Am(private val ctx: Context) {
             if (!data.isNullOrEmpty()) intent.setData(Uri.parse(data))
             intent.addFlags(flags or Intent.FLAG_ACTIVITY_NEW_TASK)
             // Use IActivityTaskManager.startActivityAsUser (Q+) or
-            // IActivityManager.startActivityAsUser (pre-Q). The shell UID is
-            // recognised by both as a legitimate caller when callingPackage is
-            // "com.android.shell".
+            // IActivityManager.startActivityAsUser (pre-Q), with our uid's
+            // package as callingPackage (it must belong to the calling uid).
             val options = if (display == 0) null
                 else android.app.ActivityOptions.makeBasic().setLaunchDisplayId(display).toBundle()
             val result = startActivityViaBinder(intent, options)
@@ -229,7 +228,7 @@ internal class Am(private val ctx: Context) {
                     args.add(userId)
                 } else if (p[i] == String::class.java) {
                     // Treat the first String slot as callingPackage.
-                    args.add(if (needsCallingPackage(args)) "com.android.shell" else null)
+                    args.add(if (needsCallingPackage(args)) callerPackage else null)
                 } else if (p[i] == Int::class.javaPrimitiveType) {
                     args.add(0)
                 } else if (p[i] == android.os.Bundle::class.java) {
@@ -243,7 +242,7 @@ internal class Am(private val ctx: Context) {
 
         private fun needsCallingPackage(argsSoFar: MutableList<Any?>): Boolean {
             for (a in argsSoFar) {
-                if ("com.android.shell" == a) return false
+                if (callerPackage == a) return false
             }
             return true
         }

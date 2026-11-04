@@ -260,7 +260,7 @@ internal class Providers {
     }
 
     companion object {
-        private const val CALLER = "com.android.shell"
+        private val CALLER: String get() = callerPackage
 
         private fun findExternalGetter(iamCls: Class<*>): Method? {
             for (m in iamCls.getMethods()) {

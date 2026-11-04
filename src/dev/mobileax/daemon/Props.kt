@@ -8,17 +8,16 @@ import java.nio.charset.StandardCharsets
  * store that `/system/bin/getprop` mmaps — but without the per-call
  * process spawn that `adb shell getprop` pays.
  * 
- * Reads are essentially free. Writes go through `__system_property_set`,
- * which RPCs into init; only shell-grantable property prefixes succeed.
+ * Reads are essentially free. Writes go to `setprop` as the shell (through
+ * [Shell]): init grants property prefixes by SELinux domain, and the shell's
+ * are the ones that matter; ours, an app's, are next to none.
  */
 internal class Props {
     private val get: Method
-    private val set: Method
 
     init {
         val sp = Class.forName("android.os.SystemProperties")
         this.get = sp.getDeclaredMethod("get", String::class.java)
-        this.set = sp.getDeclaredMethod("set", String::class.java, String::class.java)
     }
 
     fun doGet(key: String?): ByteArray {
@@ -32,7 +31,8 @@ internal class Props {
 
     fun doSet(key: String?, value: String?): ByteArray {
         try {
-            set.invoke(null, key, value)
+            val r = Shell.runBlocking(Shell.argv(listOf("setprop", key ?: "", value ?: "")) + " 2>&1")
+            if (r.exit != 0) return err("set prop-failed:" + r.out.trim().ifEmpty { "exit ${r.exit}" })
             return "ok".toByteArray(StandardCharsets.UTF_8)
         } catch (t: Throwable) {
             return err("set prop-failed:" + t.message)

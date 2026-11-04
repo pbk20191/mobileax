@@ -311,7 +311,7 @@ pub(crate) enum UiFormat { Human, Interactive, Json, Xml }
 pub(crate) enum UiWindows { App, Active, All }
 
 pub(crate) fn parse_use(rest: &[&str]) -> Result<daemon::ConnectOpts, String> {
-    let mut opts = daemon::ConnectOpts { serial: None, port: None };
+    let mut opts = daemon::ConnectOpts { serial: None, port: None, instr: daemon::instr_default() };
     let mut i = 0;
     while i < rest.len() {
         match rest[i] {
@@ -324,6 +324,8 @@ pub(crate) fn parse_use(rest: &[&str]) -> Result<daemon::ConnectOpts, String> {
                 opts.port = Some(rest.get(i).ok_or("--port needs a value")?
                     .parse().map_err(|_| "invalid --port".to_string())?);
             }
+            "--instr" => opts.instr = true,
+            "--jar" => opts.instr = false,
             serial if !serial.starts_with('-') && opts.serial.is_none() => {
                 opts.serial = Some(serial.to_string());
             }
@@ -343,7 +345,7 @@ pub(crate) fn parse_drop(rest: &[&str]) -> Result<daemon::DisconnectOpts, String
                 i += 1;
                 opts.serial = Some(rest.get(i).ok_or("--device needs a SERIAL")?.to_string());
             }
-            "--keep-jar" => opts.keep_jar = true,
+            "--keep-jar" | "--keep-apk" => opts.keep_jar = true,
             other => return Err(format!("unknown disconnect arg: {other}")),
         }
         i += 1;

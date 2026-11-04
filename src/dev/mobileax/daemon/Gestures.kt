@@ -44,7 +44,7 @@ internal class Gestures(private val h: Server.Handlers) {
         if (display == 0) return h.shot.sourceSize()
         val p = android.graphics.Point()
         @Suppress("DEPRECATION")
-        h.sysCtx.getSystemService(android.hardware.display.DisplayManager::class.java).getDisplay(display)?.getRealSize(p)
+        h.ctx.getSystemService(android.hardware.display.DisplayManager::class.java).getDisplay(display)?.getRealSize(p)
         return p
     }
 

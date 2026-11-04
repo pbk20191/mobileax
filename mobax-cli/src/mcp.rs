@@ -327,7 +327,7 @@ impl Engine {
         if crate::daemon::ping_daemon(&t.serial, t.port).is_ok() {
             return Ok(());
         }
-        crate::daemon::connect(&crate::daemon::ConnectOpts { serial: Some(t.serial.clone()), port: Some(t.port) })?;
+        crate::daemon::connect(&crate::daemon::ConnectOpts { serial: Some(t.serial.clone()), port: Some(t.port), instr: crate::daemon::instr_default() })?;
         lock(&self.screens).remove(t);
         lock(&self.pool).remove(t);
         Ok(())

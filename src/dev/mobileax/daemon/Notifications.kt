@@ -1,7 +1,5 @@
 package dev.mobileax.daemon
 
-import java.io.BufferedReader
-import java.io.InputStreamReader
 import java.nio.charset.StandardCharsets
 
 /**
@@ -90,19 +88,7 @@ internal class Notifications {
         // ---------- dumpsys runner + block splitter ----------
         @Throws(Exception::class)
         private fun runDumpsys(): String {
-            val p = Runtime.getRuntime().exec(
-                arrayOf("dumpsys", "notification", "--noredact")
-            )
-            val sb = StringBuilder(64 * 1024)
-            BufferedReader(
-                InputStreamReader(p.inputStream, StandardCharsets.UTF_8)
-            ).use { r ->
-                val buf = CharArray(4096)
-                var n: Int
-                while ((r.read(buf).also { n = it }) > 0) sb.appendRange(buf, 0, n)
-            }
-            p.waitFor()
-            return sb.toString()
+            return Shell.runBlocking("dumpsys notification --noredact").out
         }
 
         /** Slice the dump into per-NotificationRecord blocks, dropping any

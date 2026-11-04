@@ -6,6 +6,27 @@
 - `am start` goes via `IActivityTaskManager.startActivityAsUser` with
   `callingPackage="com.android.shell"`; the system Context can't host
   `startActivity` from our anonymous process.
+- The instrumentation build (`mobax use --instr`):
+  - It is an installed APK (`dev.mobileax.daemon`, Android 10 / SDK 29 or
+    later). Some OEMs need "Install via USB" (or similar) enabled once
+    before it can be installed. `mobax drop` uninstalls it (`--keep-apk`
+    keeps it).
+  - One per device: UiAutomation has one connection. A second
+    `mobax use --instr --port N` is refused; a UiAutomator test (or
+    `uiautomator dump`) started while it runs is cut off.
+  - Monkey mode is on while it runs (`ActivityManager.isUserAMonkey()`);
+    AMS clears it when the daemon goes.
+  - It is an app uid with adopted shell permissions: binder calls name its
+    own package as `callingPackage`, it declares `QUERY_ALL_PACKAGES`, and
+    what needs the shell uid goes through `Shell`. On SDK 34+ that is
+    `executeShellCommandRwe`, which does no quoting, so the script goes in on
+    stdin as one line; on SDK 29–33 the script, stdin data, stderr, exit
+    code and pid are files in the app's external `files/shell/` directory
+    and `executeShellCommand` runs `sh <file>`. `-e shell file` on
+    `am instrument` forces the file path.
+  - The SurfaceControl mirror (SDK 29–33) and, on SDK 29, the DisplayManager
+    mirror are refused to an app uid: `see` falls back to UiAutomation
+    screenshots and the live streams don't start.
 - `BroadcastReceiver` registrations from our Context aren't routed —
   `appCounts` cache TTL'd at 4.5 s instead.
 - Most binder lookups go via reflection so the jar compiles against the

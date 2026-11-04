@@ -24,6 +24,7 @@ internal class Pm(private val ctx: Context, private val ua: android.app.UiAutoma
         val pkgs = pm.getInstalledPackages(0)
         val sb = StringBuilder(8 * 1024)
         for (p in pkgs) {
+            if (p.packageName == selfPackage) continue   // the daemon itself
             val ai = p.applicationInfo ?: continue
             val system = (ai.flags and ApplicationInfo.FLAG_SYSTEM) != 0
             if (thirdPartyOnly && system) continue
