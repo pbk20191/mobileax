@@ -86,7 +86,8 @@
   command starts. A uid several packages share (Settings runs as system,
   uid 1000, with system_server) is told apart by process name, so there only
   processes running when the command starts count. On Android 11+ a query
-  limited to packages also passes logcat `--uid` (primary user's uids), so
-  only those lines leave the device; Android 10 sends the whole buffer. Quote the query as one argument when it has spaces inside a
+  limited to packages is narrowed on the device (primary user's uids), so
+  only those lines leave it: logcat `--uid` on Android 11+, the daemon's
+  `logcat_uid` (logcat piped through grep) on Android 10 and older. Quote the query as one argument when it has spaces inside a
   value: `'message:"timed out"'`. `is:crash` is `AndroidRuntime` errors and
   native crash lines; `age:` is the same as `--since`.

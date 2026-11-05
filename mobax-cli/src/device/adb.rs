@@ -76,8 +76,18 @@ struct Lines<'a> {
 struct Studio {
     query: logquery::Query,
     dev: logquery::Device,
-    /// logcat takes `--uid` (Android 11+; 10 rejects it).
-    uid_flag: bool,
+    uid_filter: UidFilter,
+}
+
+/// How the device narrows logcat to some uids.
+#[derive(Clone, Copy)]
+enum UidFilter {
+    /// logcat's `--uid` (Android 11+).
+    Flag,
+    /// The daemon's `logcat_uid`, logcat piped through grep (Android 10 and older).
+    Grep,
+    /// A daemon older than `logcat_uid`: the whole buffer, matched on the host.
+    None,
 }
 
 impl Lines<'_> {
@@ -98,7 +108,15 @@ fn studio_context(conn: &mut Conn, src: &str) -> io::Result<Studio> {
     let mut dev = logquery::Device::default();
     dev.read_packages(&shell_capture(conn, "shell pm list packages -U")?);
     // The daemon's `shell` runs one argv (no `;`, `&&`): its own round trip.
-    let uid_flag = shell_capture(conn, "shell logcat -d -t 1 --uid=0").is_ok();
+    let uid_filter = if shell_capture(conn, "shell logcat -d -t 1 --uid=0").is_ok() {
+        UidFilter::Flag
+    } else {
+        // Without uids, logcat_uid answers with an error naming itself.
+        match shell_capture(conn, "logcat_uid") {
+            Err(e) if e.to_string().contains("UNKNOWN_CMD") => UidFilter::None,
+            _ => UidFilter::Grep,
+        }
+    };
     dev.read_processes(&shell_capture(conn, "shell ps -A -o PID,NAME")?);
     if query.uses_mine {
         let top = conn.call("state top")?;
@@ -108,7 +126,7 @@ fn studio_context(conn: &mut Conn, src: &str) -> io::Result<Studio> {
             return Err(io::Error::other("package:mine: no app in front"));
         }
     }
-    Ok(Studio { query, dev, uid_flag })
+    Ok(Studio { query, dev, uid_filter })
 }
 
 // ---------- parsers ----------
@@ -274,15 +292,21 @@ fn run_logcat(conn: &mut Conn, q: &LogcatQuery) -> io::Result<()> {
         wire.push_str(&format!(" -T {}.000", now.saturating_sub(secs)));
     }
     // A query limited to packages is narrowed on the device too: the
-    // buffer can be megabytes, the app's share of it far less. Uids of the
-    // primary user only, as the host match goes by app id: an app's lines
-    // in a work profile need `-- --uid=…` or no package term.
-    if let Some(uids) = lines.studio.as_ref().filter(|st| st.uid_flag).and_then(|st| st.dev.uids_for(&st.query.expr)) {
+    // buffer can be megabytes, the app's share of it far less. logcat's
+    // --uid where it has one (Android 11+), else the daemon's grep. Uids of
+    // the primary user only, as the host match goes by app id: an app's
+    // lines in a work profile need `-- --uid=…` or no package term.
+    let uids = lines.studio.as_ref().and_then(|st| st.dev.uids_for(&st.query.expr).map(|u| (u, st.uid_filter)));
+    if let Some((uids, narrow)) = &uids {
         if uids.is_empty() {
             return Ok(());   // no package matches
         }
-        let list: Vec<String> = uids.iter().map(u32::to_string).collect();
-        wire.push_str(&format!(" --uid={}", list.join(",")));
+        let list = uids.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
+        match narrow {
+            UidFilter::Flag => wire.push_str(&format!(" --uid={list}")),
+            UidFilter::Grep => wire = format!("logcat_uid {list}{}", &wire["logcat".len()..]),
+            UidFilter::None => {}
+        }
     }
     for a in &q.args { wire.push(' '); wire.push_str(a); }
     conn.send_cmd(&wire)?;
@@ -350,6 +374,11 @@ fn shell_capture(conn: &mut Conn, wire: &str) -> io::Result<String> {
         let frame = conn.read_frame()?;
         if frame.is_empty() { break; }
         if out.is_empty() && frame.starts_with(b"ERR:") {
+            // A stream's error is followed by its end frame; an unknown
+            // verb's is the whole reply. Keep the connection in step.
+            if !frame.windows(11).any(|w| w == b"UNKNOWN_CMD") {
+                let _ = conn.read_frame();
+            }
             return Err(io::Error::other(String::from_utf8_lossy(&frame).into_owned()));
         }
         if let Some(code) = parse_exit_trailer(&frame) {

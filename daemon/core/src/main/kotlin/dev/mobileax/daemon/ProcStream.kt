@@ -64,6 +64,23 @@ internal class ProcStream(private val clip: Clipboard) {
         runProcess(c, argv, 64 * 1024, "logcat-spawn-failed:", exitTrailer = false)
     }
 
+    /**
+     * `logcat_uid UID[,UID…] [ARGS…]`: logcat's lines of those uids only,
+     * for Android 10 and older, whose logcat has no `--uid`: ARGS must ask
+     * for `-v uid`, and grep keeps the lines whose uid column matches, so
+     * the rest of the buffer never leaves the device.
+     */
+    suspend fun logcatUid(c: Conn, tail: String?) {
+        val args = split(tail)
+        val uids = args.firstOrNull()?.split(',')?.takeIf { u -> u.isNotEmpty() && u.all { it.isNotEmpty() && it.all(Char::isDigit) } }
+            ?: return c.errAndEnd("logcat_uid-needs-uids")
+        // MM-DD HH:MM:SS.mmm UID PID …
+        val keep = "^[^ ]+ +[^ ]+ +(${uids.joinToString("|")}) "
+        val cmd = Shell.argv(listOf("/system/bin/logcat") + args.drop(1)) +
+            " | /system/bin/grep --line-buffered -E " + Shell.quote(keep)
+        runProcess(c, cmd, 64 * 1024, "logcat-spawn-failed:", exitTrailer = false)
+    }
+
     suspend fun monitor(c: Conn) =
         runProcess(c, listOf("/system/bin/am", "monitor"), 16 * 1024, "monitor-spawn-failed:", exitTrailer = false, openStdin = true)
 
@@ -94,12 +111,17 @@ internal class ProcStream(private val clip: Clipboard) {
      *  EOF, since the framework holds stdout open while our stdin end is open. */
     private suspend fun runProcess(
         c: Conn, argv: List<String>, bufSize: Int, spawnErr: String, exitTrailer: Boolean, openStdin: Boolean = false,
+    ) = runProcess(c, Shell.argv(argv), bufSize, spawnErr, exitTrailer, openStdin)
+
+    /** [cmd] is one line of sh. */
+    private suspend fun runProcess(
+        c: Conn, cmd: String, bufSize: Int, spawnErr: String, exitTrailer: Boolean, openStdin: Boolean = false,
     ) {
         // Runs as the shell uid (Shell), stdout and stderr merged into one pipe
         // whose read end the looper drains.
         val p = try {
             withContext(Loop.Blocking) {
-                Shell.open(Shell.argv(argv), mergeErr = true, input = if (openStdin) Shell.Input.OPEN else Shell.Input.NONE)
+                Shell.open(cmd, mergeErr = true, input = if (openStdin) Shell.Input.OPEN else Shell.Input.NONE)
             }
         } catch (e: Exception) {
             return c.errAndEnd(spawnErr + e.message)

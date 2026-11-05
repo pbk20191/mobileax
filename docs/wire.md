@@ -258,6 +258,7 @@ wm_rotation  N                                         force rotation
 ```
 dumpsys SERVICE [ARGS…]                                chunked stream
 logcat  [ARGS…]                                        chunked stream
+logcat_uid UID[,UID…] [ARGS…]                         logcat's lines of those uids (ARGS has `-v uid`; Android ≤10, no --uid)
 shell   ARGV…                                          chunked stream + `__exit__ N` trailer
 monitor                                                am-monitor lifecycle stream
 ```

@@ -61,6 +61,7 @@ internal class Dispatch(
                     "pull" -> transfers(s).pull(c, Server.parseFileArgs(cmd).path)
                     "dumpsys" -> procs(s).dumpsys(c, Server.afterHead(cmd))
                     "logcat" -> procs(s).logcat(c, Server.afterHead(cmd))
+                    "logcat_uid" -> procs(s).logcatUid(c, Server.afterHead(cmd))
                     "shell" -> procs(s).shell(c, Server.afterHead(cmd))
                     "monitor" -> procs(s).monitor(c)
                     "push" -> c.send(Server.parseFileArgs(cmd).let { a ->
