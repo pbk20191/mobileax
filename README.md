@@ -164,6 +164,16 @@ mobax wait  "Dashboard"                         --timeout 15s
 
 Vocabulary: `#id` `[a=v]` `[a~=sub]` `[a^=pre]` `[a$=suf]` `[a="v" i]` `[a=/re/i]` · `:visible :clickable :enabled :focused :checked :editable :heading` · `:has-text("x") :text-is("x") :text-matches("re", "i")` · `:in(SEL) :has(SEL) :below(SEL) :right-of(SEL) :near(SEL, PX)` (the spatial ones list the nearest match first). Comma is OR; an unknown attribute name is an error. More patterns in [docs/cookbook.md](docs/cookbook.md).
 
+Coming from Appium? `tap`, `find` and `wait` also take its XPath, evaluated
+on the device over the same document Appium's UiAutomator2 server builds
+(class-named elements, `@text`, `@resource-id`, `@content-desc`, …), with
+`matches()`, `lower-case()`, `upper-case()` and `ends-with()`:
+
+```bash
+mobax tap  "xpath://*[@text='Wi-Fi']/following-sibling::android.widget.Switch"
+mobax find "xpath:count(//*[@checked='true'])"
+```
+
 ## How it works
 
 ```
