@@ -22,11 +22,14 @@ import kotlin.concurrent.Volatile
  *  - 31–33: SurfaceControl.captureDisplay(DisplayCaptureArgs)
  *  - 29–30: SurfaceControl.screenshot(Rect, w, h, rotation)
  *
- * The first failure turns it off for the process; callers then use
- * UiAutomation.takeScreenshot.
+ * Missing API or permission turns it off for the process; other failures
+ * (no buffer: the display off, say) only after [MAX_FAILURES] in a row.
+ * Callers then use UiAutomation.takeScreenshot.
  */
 internal object DisplayCapture {
     @Volatile private var off = false
+    @Volatile private var failures = 0
+    private const val MAX_FAILURES = 3
 
     /** A software bitmap of [crop] (screen coordinates; null = whole screen)
      *  scaled by [scale], or null when this path is unavailable. [rotation]
@@ -36,37 +39,60 @@ internal object DisplayCapture {
         // 29–30 capture in the natural orientation: a turned screen comes out squeezed.
         if (Build.VERSION.SDK_INT < 31 && rotation != 0) return null
         return try {
-            val hw = when {
-                Build.VERSION.SDK_INT >= 34 -> viaWindowManager(scale, crop)
-                Build.VERSION.SDK_INT >= 31 -> viaCaptureArgs(scale, crop, screenW, screenH)
-                else -> viaScreenshot(scale, crop, screenW, screenH)
+            val bmp = when {
+                Build.VERSION.SDK_INT >= 34 -> fromBuffer(viaWindowManager(scale, crop))
+                Build.VERSION.SDK_INT >= 31 -> fromBuffer(viaCaptureArgs(scale, crop, screenW, screenH))
+                else -> viaScreenshot(scale, crop, screenW, screenH)?.let(::toSoftware)
             } ?: error("no buffer")
-            if (hw.config != Bitmap.Config.HARDWARE) hw
-            else hw.copy(Bitmap.Config.ARGB_8888, false).also { hw.recycle() } ?: error("copy failed")
+            failures = 0
+            bmp
         } catch (t: Throwable) {
-            off = true
             val c = generateSequence(t) { it.cause }.last()
-            Logx.w("screenshot: display capture unavailable (${c.javaClass.simpleName}: ${c.message}); using UiAutomation")
+            val missing = c is ReflectiveOperationException || c is LinkageError || c is SecurityException
+            if (missing || ++failures >= MAX_FAILURES) {
+                off = true
+                Logx.w("screenshot: display capture unavailable (${c.javaClass.simpleName}: ${c.message}); using UiAutomation")
+            } else {
+                Logx.w("screenshot: display capture failed (${c.javaClass.simpleName}: ${c.message}); UiAutomation this time")
+            }
             null
         }
+    }
+
+    /** A ScreenshotHardwareBuffer as a software bitmap; its HardwareBuffer is
+     *  closed here (left to the GC, graphics memory piles up between shots). */
+    private fun fromBuffer(shb: Any?): Bitmap? {
+        if (shb == null) return null
+        try {
+            val hw = shb.javaClass.getMethod("asBitmap").invoke(shb) as Bitmap? ?: return null
+            return toSoftware(hw)
+        } finally {
+            (shb.javaClass.getMethod("getHardwareBuffer").invoke(shb) as? AutoCloseable)?.close()
+        }
+    }
+
+    private fun toSoftware(hw: Bitmap): Bitmap? {
+        if (hw.config != Bitmap.Config.HARDWARE) return hw
+        return hw.copy(Bitmap.Config.ARGB_8888, false).also { hw.recycle() } ?: error("copy failed")
     }
 
     private val windowManager: Any by lazy {
         Binders.asInterface("android.view.IWindowManager\$Stub", Binders.service("window"))!!
     }
 
-    private fun viaWindowManager(scale: Float, crop: Rect?): Bitmap? {
+    /** A ScreenshotHardwareBuffer, or null. */
+    private fun viaWindowManager(scale: Float, crop: Rect?): Any? {
         val sc = Class.forName("android.window.ScreenCapture")
         val args = captureArgs("android.window.ScreenCapture\$CaptureArgs\$Builder", null, scale, crop)
         val listener = sc.getMethod("createSyncCaptureListener").invoke(null)
         val wm = windowManager
         wm.javaClass.methods.first { it.name == "captureDisplay" && it.parameterTypes.size == 3 }
             .invoke(wm, 0, args, listener)
-        val shb = listener.javaClass.getMethod("getBuffer").invoke(listener) ?: return null
-        return shb.javaClass.getMethod("asBitmap").invoke(shb) as Bitmap?
+        return listener.javaClass.getMethod("getBuffer").invoke(listener)
     }
 
-    private fun viaCaptureArgs(scale: Float, crop: Rect?, screenW: Int, screenH: Int): Bitmap? {
+    /** A ScreenshotHardwareBuffer, or null. */
+    private fun viaCaptureArgs(scale: Float, crop: Rect?, screenW: Int, screenH: Int): Any? {
         val scCls = Class.forName("android.view.SurfaceControl")
         val token = scCls.getMethod("getInternalDisplayToken").invoke(null) as IBinder
         val args = captureArgs("android.view.SurfaceControl\$DisplayCaptureArgs\$Builder", token, scale, crop ?: Rect(0, 0, screenW, screenH)) { b, src ->
@@ -74,8 +100,7 @@ internal object DisplayCapture {
             b.javaClass.getMethod("setSize", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
                 .invoke(b, maxOf(1, (src.width() * scale).toInt()), maxOf(1, (src.height() * scale).toInt()))
         }
-        val shb = scCls.getMethod("captureDisplay", args.javaClass).invoke(null, args) ?: return null
-        return shb.javaClass.getMethod("asBitmap").invoke(shb) as Bitmap?
+        return scCls.getMethod("captureDisplay", args.javaClass).invoke(null, args)
     }
 
     /** Builds CaptureArgs through its builder; [token] for the display builder's constructor,
