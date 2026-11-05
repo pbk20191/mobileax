@@ -15,7 +15,9 @@
 //
 // `package:` goes by the entry's uid, so it keeps matching across restarts
 // and still has the lines of a process that has died; `mine` is the app in
-// front when the query starts.
+// front when the query starts. A uid several packages share (Settings runs
+// as system, uid 1000, with system_server) is told apart by process name,
+// so there only the processes running when the query starts count.
 
 use std::collections::HashMap;
 
@@ -372,10 +374,52 @@ impl Device {
             .map_or(&[], Vec::as_slice)
     }
 
-    /// A process started after logs began is named after its app.
+    /// The packages an entry belongs to: its uid's, or for a shared uid the
+    /// one its process is named after (`pkg` or `pkg:service`).
+    fn entry_packages<'a>(&'a self, e: &Entry) -> Vec<&'a str> {
+        let all = self.packages_of(e.uid);
+        if all.len() <= 1 {
+            return all.iter().map(String::as_str).collect();
+        }
+        let Some(proc) = self.processes.get(&e.pid) else { return Vec::new() };
+        let app = proc.split(':').next().unwrap_or(proc);
+        all.iter().map(String::as_str).filter(|p| *p == app).collect()
+    }
+
+    /// A process started after logs began is named after its app, when its
+    /// uid has only that one.
     fn process_of<'a>(&'a self, e: &Entry) -> Option<&'a str> {
-        self.processes.get(&e.pid).map(String::as_str)
-            .or_else(|| self.packages_of(e.uid).first().map(String::as_str))
+        self.processes.get(&e.pid).map(String::as_str).or_else(|| match self.packages_of(e.uid) {
+            [only] => Some(only.as_str()),
+            _ => None,
+        })
+    }
+
+    /// The uids `package` terms can match, for logcat's `--uid` (filtering on
+    /// the device instead of shipping the whole buffer); None when the query
+    /// isn't limited to packages.
+    pub fn uids_for(&self, x: &Expr) -> Option<Vec<u32>> {
+        match x {
+            Expr::Term(Term::Field { key: Key::Package, m }) => {
+                let mut v: Vec<u32> = self.packages.iter()
+                    .filter(|(_, ps)| ps.iter().any(|p| field(m, p, self)))
+                    .map(|(u, _)| *u)
+                    .collect();
+                v.sort_unstable();
+                Some(v)
+            }
+            // One limited operand limits the conjunction.
+            Expr::And(all) => all.iter().find_map(|x| self.uids_for(x)),
+            // Each alternative must be limited.
+            Expr::Or(alts) => {
+                let mut v = Vec::new();
+                for a in alts { v.extend(self.uids_for(a)?); }
+                v.sort_unstable();
+                v.dedup();
+                Some(v)
+            }
+            _ => None,
+        }
     }
 }
 
@@ -407,14 +451,14 @@ fn term(t: &Term, e: &Entry, d: &Device) -> bool {
         Term::Text(s) => {
             let s = s.to_lowercase();
             [e.tag, e.message].iter().any(|v| v.to_lowercase().contains(&s))
-                || d.packages_of(e.uid).iter().any(|p| p.to_lowercase().contains(&s))
+                || d.entry_packages(e).iter().any(|p| p.to_lowercase().contains(&s))
                 || d.process_of(e).is_some_and(|p| p.to_lowercase().contains(&s))
         }
         Term::Field { key, m } => match key {
             Key::Tag => field(m, e.tag, d),
             Key::Message => field(m, e.message, d),
             Key::Process => d.process_of(e).is_some_and(|p| field(m, p, d)),
-            Key::Package => d.packages_of(e.uid).iter().any(|p| field(m, p, d)),
+            Key::Package => d.entry_packages(e).iter().any(|p| field(m, p, d)),
         },
     }
 }
@@ -434,8 +478,8 @@ mod tests {
 
     fn dev() -> Device {
         let mut d = Device::default();
-        d.read_packages("package:com.example.chat uid:10676\npackage:com.android.settings uid:1000\n");
-        d.read_processes("  PID NAME\n13082 com.example.chat\n 900 system_server\n");
+        d.read_packages("package:com.example.chat uid:10676\npackage:com.android.settings uid:1000\npackage:android uid:1000\n");
+        d.read_processes("  PID NAME\n13082 com.example.chat\n 900 system_server\n 2400 com.android.settings\n");
         d.mine = Some("com.example.chat".into());
         d
     }
@@ -443,6 +487,7 @@ mod tests {
     const APP: &str = "11-05 09:43:45.677 10676 13082 13082 I VRI[ChannelActivity]@eb8f35c: call setFrameRateCategory";
     const CRASH: &str = "11-05 09:43:46.000 10676 14000 14000 E AndroidRuntime: FATAL EXCEPTION: main";
     const SYS: &str = "11-05 09:43:47.000  1000   900  1200 W ActivityManager: Slow operation";
+    const SETTINGS: &str = "11-05 09:43:48.000  1000  2400  2400 I SettingsActivity: onCreate";
 
     fn hit(q: &str, line: &str) -> bool {
         parse(q).unwrap().matches(&parse_entry(line).unwrap(), &dev())
@@ -464,7 +509,9 @@ mod tests {
         assert!(hit("package:example", CRASH));
         assert!(hit("package:mine", CRASH));
         assert!(!hit("package:mine", SYS));
-        assert!(hit("package=:com.android.settings", SYS));
+        // Shared uid 1000: by process name, not every system_server line.
+        assert!(hit("package=:com.android.settings", SETTINGS));
+        assert!(!hit("package=:com.android.settings", SYS));
         assert!(!hit("package=:com.android", SYS));
         assert!(hit("process:system_server", SYS));
         assert!(hit("process:example", CRASH));
@@ -482,6 +529,17 @@ mod tests {
         assert!(hit("is:crash", CRASH) && !hit("is:crash", SYS));
         assert!(hit("frameratecategory", APP) && hit("call setFrame", APP));
         assert!(hit("name:mine age:5m package:mine", APP));
+    }
+
+    #[test]
+    fn package_terms_narrow_to_uids() {
+        let d = dev();
+        let uids = |q: &str| d.uids_for(&parse(q).unwrap().expr);
+        assert_eq!(uids("package:mine level:W"), Some(vec![10676]));
+        assert_eq!(uids("package=:com.android.settings | package:example"), Some(vec![1000, 10676]));
+        assert_eq!(uids("package:mine | tag:X"), None);
+        assert_eq!(uids("-package:mine"), None);
+        assert_eq!(uids("package:nothing"), Some(vec![]));
     }
 
     #[test]

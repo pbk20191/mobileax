@@ -83,6 +83,10 @@
   it on the host over `logcat -v threadtime -v uid`. `package:` (and `--pkg`)
   goes by the entry's uid, so it covers an app's earlier, dead processes and
   follows it across restarts; `package:mine` is the app in front when the
-  command starts. Quote the query as one argument when it has spaces inside a
+  command starts. A uid several packages share (Settings runs as system,
+  uid 1000, with system_server) is told apart by process name, so there only
+  processes running when the command starts count. On Android 11+ a query
+  limited to packages also passes logcat `--uid` (primary user's uids), so
+  only those lines leave the device; Android 10 sends the whole buffer. Quote the query as one argument when it has spaces inside a
   value: `'message:"timed out"'`. `is:crash` is `AndroidRuntime` errors and
   native crash lines; `age:` is the same as `--since`.

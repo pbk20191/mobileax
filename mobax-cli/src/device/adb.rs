@@ -70,7 +70,14 @@ impl LogcatQuery {
 /// Studio query, the matching entries as plain `threadtime`.
 struct Lines<'a> {
     q: &'a LogcatQuery,
-    studio: Option<(logquery::Query, logquery::Device)>,
+    studio: Option<Studio>,
+}
+
+struct Studio {
+    query: logquery::Query,
+    dev: logquery::Device,
+    /// logcat takes `--uid` (Android 11+; 10 rejects it).
+    uid_flag: bool,
 }
 
 impl Lines<'_> {
@@ -78,18 +85,20 @@ impl Lines<'_> {
         if !self.q.keeps(line) {
             return None;
         }
-        let Some((query, dev)) = &self.studio else { return Some(line.to_string()) };
+        let Some(st) = &self.studio else { return Some(line.to_string()) };
         let e = logquery::parse_entry(line)?;
-        query.matches(&e, dev).then_some(e.plain)
+        st.query.matches(&e, &st.dev).then_some(e.plain)
     }
 }
 
 /// Reads what a Studio query needs before logcat starts: which packages own
 /// which uid, the running processes, and (for `package:mine`) the app in front.
-fn studio_context(conn: &mut Conn, src: &str) -> io::Result<(logquery::Query, logquery::Device)> {
+fn studio_context(conn: &mut Conn, src: &str) -> io::Result<Studio> {
     let query = logquery::parse(src).map_err(io::Error::other)?;
     let mut dev = logquery::Device::default();
     dev.read_packages(&shell_capture(conn, "shell pm list packages -U")?);
+    // The daemon's `shell` runs one argv (no `;`, `&&`): its own round trip.
+    let uid_flag = shell_capture(conn, "shell logcat -d -t 1 --uid=0").is_ok();
     dev.read_processes(&shell_capture(conn, "shell ps -A -o PID,NAME")?);
     if query.uses_mine {
         let top = conn.call("state top")?;
@@ -99,7 +108,7 @@ fn studio_context(conn: &mut Conn, src: &str) -> io::Result<(logquery::Query, lo
             return Err(io::Error::other("package:mine: no app in front"));
         }
     }
-    Ok((query, dev))
+    Ok(Studio { query, dev, uid_flag })
 }
 
 // ---------- parsers ----------
@@ -263,6 +272,17 @@ fn run_logcat(conn: &mut Conn, q: &LogcatQuery) -> io::Result<()> {
         let now: u64 = shell_capture(conn, "shell date +%s")?.trim().parse()
             .map_err(|_| io::Error::other("since: could not read the device clock"))?;
         wire.push_str(&format!(" -T {}.000", now.saturating_sub(secs)));
+    }
+    // A query limited to packages is narrowed on the device too: the
+    // buffer can be megabytes, the app's share of it far less. Uids of the
+    // primary user only, as the host match goes by app id: an app's lines
+    // in a work profile need `-- --uid=…` or no package term.
+    if let Some(uids) = lines.studio.as_ref().filter(|st| st.uid_flag).and_then(|st| st.dev.uids_for(&st.query.expr)) {
+        if uids.is_empty() {
+            return Ok(());   // no package matches
+        }
+        let list: Vec<String> = uids.iter().map(u32::to_string).collect();
+        wire.push_str(&format!(" --uid={}", list.join(",")));
     }
     for a in &q.args { wire.push(' '); wire.push_str(a); }
     conn.send_cmd(&wire)?;
