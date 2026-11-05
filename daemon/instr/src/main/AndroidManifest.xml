@@ -4,7 +4,9 @@
     <!-- Package visibility: adopted shell permissions don't widen what an
          app uid can see, and apps/links/pm/install must see every package. -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
-    <application android:hasCode="true" />
+    <!-- No icon in the launcher, so the label is how Settings › Apps names it:
+         a stray copy (a host that never ran `mobax drop`) can be found and removed. -->
+    <application android:hasCode="true" android:label="mobileAX daemon" />
     <instrumentation
         android:name="dev.mobileax.daemon.MobaxInstrumentation"
         android:targetPackage="dev.mobileax.daemon" />
