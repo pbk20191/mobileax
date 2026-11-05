@@ -201,7 +201,8 @@ object Traverse {
         return sb.toString()
     }
 
-    private fun getChildSafe(n: AccessibilityNodeInfo, i: Int): AccessibilityNodeInfo? {
+    /** Child [i], with the descendants prefetched where the platform allows; null when it is gone. */
+    internal fun getChildSafe(n: AccessibilityNodeInfo, i: Int): AccessibilityNodeInfo? {
         try {
             if (Build.VERSION.SDK_INT >= 33 && PREFETCH != -1) {
                 return n.getChild(i, PREFETCH)

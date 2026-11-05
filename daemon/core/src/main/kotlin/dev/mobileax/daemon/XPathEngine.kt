@@ -112,7 +112,7 @@ internal class XPathEngine(private val ua: UiAutomation, private val events: UiE
                 val o = open.last()
                 if (o.next < o.count) {
                     at = o.next
-                    n = try { o.node.getChild(o.next++) } catch (_: Throwable) { null }
+                    n = Traverse.getChildSafe(o.node, o.next++)
                     into = o.el
                     nClip = o.clip
                     advanced = true
