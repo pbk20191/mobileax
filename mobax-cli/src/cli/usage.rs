@@ -31,7 +31,6 @@ Selectors (CSS-like, Playwright-inspired):
   mobax find 'LinearLayout:has(TextView[text=Wi-Fi])'   the row holding it (innermost)
   mobax tap 'by:res=title text~=Wi-Fi'      UiAutomator By, matched live on the device
                                              (tap/find/wait; see docs/wire.md)
-  mobax tap \"xpath://*[@text='OK']\"        Appium's XPath, on the device (tap/find/wait)
   Pseudos: :visible :clickable :enabled :focused :checkable :checked
            :editable :heading :has-text(\"x\") :text-is(\"x\") :text-matches(\"re\")
            :in(SEL) :has(SEL) :below(SEL) :right-of(SEL) :near(SEL, PX)

@@ -183,7 +183,10 @@ focused display=N)`. A value with spaces goes in `"quotes"`. `dir` on
 `by_swipe` is the finger's: a scrollable element scrolls (the content moves
 the other way) and says `end` when nothing is left.
 
-## XPath queries — Appium's document, on the device
+## XPath queries — Appium's document, on the device (experimental)
+
+Not advertised in the README, usage or MCP instructions: kept for people
+bringing Appium locators, and may change or go.
 
 `xpath:` queries (`XPathEngine`) build the screen as Appium's UiAutomator2
 server shows it — elements named after the class under `hierarchy`, with
