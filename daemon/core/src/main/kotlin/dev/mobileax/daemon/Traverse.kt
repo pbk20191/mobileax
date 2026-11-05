@@ -6,7 +6,6 @@ import android.view.accessibility.AccessibilityNodeInfo
 
 object Traverse {
     private val PREFETCH = resolvePrefetchFlags()
-    private val TMP_RECT = Rect()
 
     /** A node whose `children` array is open; [next] is the next child index to
      *  write; [clip] is what its children can show through. */
@@ -97,7 +96,8 @@ object Traverse {
         val hint = n.hintText
         if (hint != null && hint.isNotEmpty()) out.str("hint", hint)
 
-        val b = TMP_RECT
+        // Its own Rect: dump, by_find and xpath_find write nodes on different threads.
+        val b = Rect()
         n.getBoundsInScreen(b)
         var shown: Rect? = given ?: Rect(b)
         if (given == null && clip != null && !shown!!.intersect(clip)) shown = null

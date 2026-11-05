@@ -85,7 +85,9 @@ internal class Transfers(private val ctx: Context, private val installer: Instal
         if (path == null) return c.errAndEnd("pull-needs-path")
         val q = Shell.quote(path)
         val p = try {
-            withContext(Loop.Blocking) { Shell.open("( [ -e $q ] || exit $NOT_FOUND; [ -d $q ] && exit $IS_DIR; exec cat $q )") }
+            Shell.start("( [ -e $q ] || exit $NOT_FOUND; [ -d $q ] && exit $IS_DIR; exec cat $q )")
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             return c.errAndEnd("pull-failed:${e.message}")
         }
@@ -125,7 +127,7 @@ internal class Transfers(private val ctx: Context, private val installer: Instal
         val dirCheck = if (parent != null) "[ -d ${Shell.quote(parent)} ] || exit $NOT_FOUND; " else ""
         val chmod = if (mode > 0) " && chmod ${Integer.toOctalString(mode)} $q" else ""
         val p = try {
-            withContext(Loop.Blocking) { Shell.open("( ${dirCheck}cat > $q$chmod )", input = Shell.Input.DATA) }
+            Shell.start("( ${dirCheck}cat > $q$chmod )", input = Shell.Input.DATA)
         } catch (e: Exception) {
             c.drainChunks()
             return err("write-failed:${e.message}")

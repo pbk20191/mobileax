@@ -369,7 +369,7 @@ impl Device {
     }
 
     fn packages_of(&self, uid: &str) -> &[String] {
-        uid.parse::<u32>().ok()
+        uid_number(uid)
             .and_then(|u| self.packages.get(&(u % 100_000)))
             .map_or(&[], Vec::as_slice)
     }
@@ -422,6 +422,15 @@ impl Device {
         }
     }
 }
+
+/// logcat's uid column: a number, or for a system uid whose name has at
+/// most 5 letters, the name (`shell`, `radio`, `nfc`).
+fn uid_number(col: &str) -> Option<u32> {
+    col.parse().ok().or_else(|| AID_NAMES.iter().find(|(n, _)| *n == col).map(|(_, u)| *u))
+}
+
+/// Android's fixed uids (android_filesystem_config.h) with names of 5 letters or fewer.
+const AID_NAMES: &[(&str, u32)] = &[("root", 0), ("radio", 1001), ("input", 1004), ("audio", 1005), ("log", 1007), ("mount", 1009), ("wifi", 1010), ("adb", 1011), ("media", 1013), ("dhcp", 1014), ("vpn", 1016), ("usb", 1018), ("drm", 1019), ("mdnsr", 1020), ("gps", 1021), ("mtp", 1024), ("nfc", 1027), ("clat", 1029), ("nvram", 1050), ("dns", 1051), ("ese", 1060), ("hsm", 1064), ("lmkd", 1069), ("llkd", 1070), ("gsid", 1074), ("artd", 1082), ("uwb", 1083), ("diced", 1085), ("shell", 2000), ("cache", 2001), ("diag", 2002)];
 
 impl Query {
     pub fn matches(&self, e: &Entry, d: &Device) -> bool {
@@ -487,6 +496,7 @@ mod tests {
     const APP: &str = "11-05 09:43:45.677 10676 13082 13082 I VRI[ChannelActivity]@eb8f35c: call setFrameRateCategory";
     const CRASH: &str = "11-05 09:43:46.000 10676 14000 14000 E AndroidRuntime: FATAL EXCEPTION: main";
     const SYS: &str = "11-05 09:43:47.000  1000   900  1200 W ActivityManager: Slow operation";
+    const SHELL: &str = "11-05 09:53:43.343 shell  2933  2933 I adbd    : requested";
     const SETTINGS: &str = "11-05 09:43:48.000  1000  2400  2400 I SettingsActivity: onCreate";
 
     fn hit(q: &str, line: &str) -> bool {
@@ -529,6 +539,16 @@ mod tests {
         assert!(hit("is:crash", CRASH) && !hit("is:crash", SYS));
         assert!(hit("frameratecategory", APP) && hit("call setFrame", APP));
         assert!(hit("name:mine age:5m package:mine", APP));
+    }
+
+    #[test]
+    fn named_uids_are_numbers() {
+        let mut d = dev();
+        d.read_packages("package:com.android.shell uid:2000\n");
+        assert!(parse("package=:com.android.shell").unwrap().matches(&parse_entry(SHELL).unwrap(), &d));
+        assert_eq!(uid_number("radio"), Some(1001));
+        assert_eq!(uid_number("10123"), Some(10123));
+        assert_eq!(uid_number("nobody"), None);
     }
 
     #[test]

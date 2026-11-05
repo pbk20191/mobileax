@@ -174,7 +174,9 @@ pub(crate) fn parse_logs(rest: &[&str]) -> Result<Cmd, String> {
     if pkg.is_some() && pid.is_some() {
         return Err("--pkg and --pid are exclusive".into());
     }
-    let mut studio = query.join(" ");
+    // The shell took the quotes off `message:"timed out"`: put them back,
+    // or the query would read two terms.
+    let mut studio = query.iter().map(|a| requote(a)).collect::<Vec<_>>().join(" ");
     if let Some(p) = &pkg {
         studio = if studio.is_empty() { format!("package=:{p}") } else { format!("package=:{p} & ({studio})") };
     }
@@ -232,6 +234,22 @@ pub(crate) fn parse_logs(rest: &[&str]) -> Result<Cmd, String> {
     q.args = args;
     q.studio = studio;
     Ok(Cmd::Adb(adb::Cmd::Logcat(q)))
+}
+
+/// One query word as typed before the shell split it: a value with spaces
+/// in quotes again (`message:timed out` → `message:"timed out"`).
+fn requote(arg: &str) -> String {
+    if !arg.contains(char::is_whitespace) || arg.contains('"') {
+        return arg.to_string();
+    }
+    let neg = usize::from(arg.starts_with('-'));
+    let key = arg[neg..].chars().take_while(char::is_ascii_alphabetic).count();
+    let after = &arg[neg + key..];
+    let op = ["~:", "=:", ":"].into_iter().find(|o| after.starts_with(o)).filter(|_| key > 0);
+    match op {
+        Some(o) => format!("{}\"{}\"", &arg[..neg + key + o.len()], &after[o.len()..]),
+        None => format!("\"{arg}\""),
+    }
 }
 
 /// `-tag:x`, `-package~:y`: a negated query term, not a flag.
@@ -1086,6 +1104,8 @@ mod parse_logs_tests {
         assert_eq!((s.studio.as_deref(), s.since_secs, s.tail), (Some("package:mine -tag:chatty level:WARN age:5m"), Some(300), Some(100)));
         assert_eq!(s.args, ["-v", "threadtime", "-v", "uid", "-d"]);
         assert_eq!(q(&["--pkg", "a.b", "tag:X", "|", "tag:Y"]).studio.as_deref(), Some("package=:a.b & (tag:X | tag:Y)"));
+        // The shell's quotes are gone by now.
+        assert_eq!(q(&["message:timed out", "-tag~:a b"]).studio.as_deref(), Some("message:\"timed out\" -tag~:\"a b\""));
         assert!(parse_logs(&["-v", "brief", "tag:X"]).is_err());
         assert!(parse_logs(&["level:LOUD"]).is_err());
         assert!(parse_logs(&["-zap"]).is_err());

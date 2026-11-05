@@ -63,7 +63,9 @@ private class RweProc(cmd: String, mergeErr: Boolean, input: Input) : ShellProc(
     init {
         val (out, i, e) = ua.executeShellCommandRwe("sh")
         stdout = out
-        val body = if (mergeErr) "{ $cmd; } 2>&1" else cmd
+        // A subshell: an `exit N` or `exec` in the command ends it, not the
+        // script, which still reports the code.
+        val body = if (mergeErr) "( $cmd ) 2>&1" else "( $cmd )"
         // One line: sh reads its script line by line and the command
         // inherits that stdin, so its input is only what follows. The
         // trailing exit keeps sh from running that input as script when
@@ -116,7 +118,7 @@ private class FileProc(private val cmd: String, private val mergeErr: Boolean, p
     private val n = nonce()
     private fun f(ext: String) = File(UaShell.dir, "$n.$ext")
     private val script = f("sh"); private val errF = f("err"); private val codeF = f("code")
-    private val pidF = f("pid"); private val inF = f("in")
+    private val pidF = f("pid"); private val inF = f("in"); private val doneF = f("done")
     @Volatile private var out: ParcelFileDescriptor? = null
     @Volatile private var errText = ""
     @Volatile private var ended = false
@@ -132,8 +134,16 @@ private class FileProc(private val cmd: String, private val mergeErr: Boolean, p
             Input.OPEN -> ""
         }
         val redirErr = if (mergeErr) "2>&1" else "2> ${errF.absolutePath}"
-        val body = if (input == Input.OPEN) "sleep 2147483647 | { $cmd\n} $redirErr" else "{ $cmd\n} $redirIn $redirErr"
-        script.writeText("echo \$\$ > ${pidF.absolutePath}\n$body\necho \$? > ${codeF.absolutePath}.t && mv ${codeF.absolutePath}.t ${codeF.absolutePath}\n")
+        // OPEN: a stdin that stays open and empty and ends once the command
+        // has (sh waits for both sides of a pipe; a fifo can't live on
+        // external storage).
+        val done = doneF.absolutePath
+        val body = if (input == Input.OPEN) {
+            "while [ ! -e $done ]; do sleep 0.5; done | { ( $cmd\n) $redirErr; r=\$?; : > $done; exit \$r; }"
+        } else "( $cmd\n) $redirIn $redirErr"   // a subshell: `exit N` / `exec` end it, not the script
+        // The code is recorded on any way out, an `exit N` in the command included.
+        val code = codeF.absolutePath
+        script.writeText("trap 'echo \$? > $code.t && mv $code.t $code' EXIT\necho \$\$ > ${pidF.absolutePath}\n$body\n")
         if (input == Input.DATA) {
             // The command starts once the caller has written all of it.
             stdin = object : FileOutputStream(inF) {
@@ -170,13 +180,20 @@ private class FileProc(private val cmd: String, private val mergeErr: Boolean, p
         killed = true
         try { stdin?.close() } catch (_: IOException) {}
         try { out?.close() } catch (_: IOException) {}
-        if (!ended && !codeF.exists()) {
-            val pid = try { pidF.readText().trim().toIntOrNull() ?: 0 } catch (_: IOException) { 0 }
-            terminate(pid)
-        }
+        val started = out != null
         Loop.scope.launch(Loop.Blocking) {
+            if (started && !ended && !codeF.exists()) {
+                // Just launched, the script may not have written its pid yet.
+                var pid = 0
+                for (i in 0 until 20) {
+                    pid = try { pidF.readText().trim().toIntOrNull() ?: 0 } catch (_: IOException) { 0 }
+                    if (pid > 0 || codeF.exists()) break
+                    delay(50)
+                }
+                terminate(pid)
+            }
             delay(2_000)   // after the script's last write
-            for (x in listOf(script, errF, codeF, pidF, inF, File("${codeF.absolutePath}.t"))) x.delete()
+            for (x in listOf(script, errF, codeF, pidF, inF, doneF, File("${codeF.absolutePath}.t"))) x.delete()
         }
     }
 }

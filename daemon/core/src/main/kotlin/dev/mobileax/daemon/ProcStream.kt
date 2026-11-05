@@ -74,8 +74,10 @@ internal class ProcStream(private val clip: Clipboard) {
         val args = split(tail)
         val uids = args.firstOrNull()?.split(',')?.takeIf { u -> u.isNotEmpty() && u.all { it.isNotEmpty() && it.all(Char::isDigit) } }
             ?: return c.errAndEnd("logcat_uid-needs-uids")
-        // MM-DD HH:MM:SS.mmm UID PID …
-        val keep = "^[^ ]+ +[^ ]+ +(${uids.joinToString("|")}) "
+        // MM-DD HH:MM:SS.mmm UID PID …; a system uid with a short name
+        // shows as the name (`shell`, `radio`).
+        val alts = uids + uids.mapNotNull { AID_NAMES[it.toInt()] }
+        val keep = "^[^ ]+ +[^ ]+ +(${alts.joinToString("|")}) "
         val cmd = Shell.argv(listOf("/system/bin/logcat") + args.drop(1)) +
             " | /system/bin/grep --line-buffered -E " + Shell.quote(keep)
         runProcess(c, cmd, 64 * 1024, "logcat-spawn-failed:", exitTrailer = false)
@@ -120,9 +122,9 @@ internal class ProcStream(private val clip: Clipboard) {
         // Runs as the shell uid (Shell), stdout and stderr merged into one pipe
         // whose read end the looper drains.
         val p = try {
-            withContext(Loop.Blocking) {
-                Shell.open(cmd, mergeErr = true, input = if (openStdin) Shell.Input.OPEN else Shell.Input.NONE)
-            }
+            Shell.start(cmd, mergeErr = true, input = if (openStdin) Shell.Input.OPEN else Shell.Input.NONE)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             return c.errAndEnd(spawnErr + e.message)
         }
@@ -190,3 +192,6 @@ internal class ProcStream(private val clip: Clipboard) {
         fun split(tail: String?): List<String> = if (tail.isNullOrEmpty()) emptyList() else tail.split(WS)
     }
 }
+
+/** Android's fixed uids with names logcat prints in their place (5 letters or fewer). */
+private val AID_NAMES: Map<Int, String> = mapOf(0 to "root", 1001 to "radio", 1004 to "input", 1005 to "audio", 1007 to "log", 1009 to "mount", 1010 to "wifi", 1011 to "adb", 1013 to "media", 1014 to "dhcp", 1016 to "vpn", 1018 to "usb", 1019 to "drm", 1020 to "mdnsr", 1021 to "gps", 1024 to "mtp", 1027 to "nfc", 1029 to "clat", 1050 to "nvram", 1051 to "dns", 1060 to "ese", 1064 to "hsm", 1069 to "lmkd", 1070 to "llkd", 1074 to "gsid", 1082 to "artd", 1083 to "uwb", 1085 to "diced", 2000 to "shell", 2001 to "cache", 2002 to "diag")

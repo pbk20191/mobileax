@@ -1,9 +1,13 @@
 package dev.mobileax.daemon
 
 import android.os.ParcelFileDescriptor
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException
@@ -55,11 +59,25 @@ object Shell {
         openShell(cmd, mergeErr, input)
 
     /**
+     * [open] off the main looper, for a coroutine that may be cancelled
+     * meanwhile (its client gone): the process started by then is killed,
+     * not left running with nobody to stop it.
+     */
+    suspend fun start(cmd: String, mergeErr: Boolean = false, input: Input = Input.NONE): ShellProc {
+        val p = withContext(NonCancellable + Loop.Blocking) { open(cmd, mergeErr, input) }
+        if (!currentCoroutineContext().isActive) {
+            p.kill()
+            throw CancellationException("cancelled while starting a shell command")
+        }
+        return p
+    }
+
+    /**
      * Runs [cmd] to the end. Past [timeoutMs] it is killed (its pipes close,
      * so the blocked reads return) and exit is -1.
      */
     suspend fun run(cmd: String, timeoutMs: Long = 10_000): ShellResult {
-        val p = withContext(Loop.Blocking) { open(cmd) }
+        val p = start(cmd)
         var timedOut = false
         val watchdog = Loop.scope.launch(Loop.Blocking) { delay(timeoutMs); timedOut = true; p.kill() }
         try {
@@ -96,8 +114,8 @@ object Shell {
      * `ps` (toybox `pkill -P` matches nothing on some versions, e.g. SDK 29).
      * Its own commands get no watchdog, so this never recurses.
      */
-    fun terminate(pid: Int) {
-        if (pid <= 0) return
+    fun terminate(pid: Int, then: () -> Unit = {}) {
+        if (pid <= 0) return then()
         Loop.scope.launch(Loop.Blocking) {
             try {
                 val table = once("ps -A -o PID=,PPID=")
@@ -118,6 +136,7 @@ object Shell {
                 }
                 once("kill -TERM ${tree.joinToString(" ")}")
             } catch (_: Throwable) {}
+            then()
         }
     }
 

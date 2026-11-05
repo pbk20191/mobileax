@@ -198,19 +198,20 @@ internal class XPathEngine(private val ua: UiAutomation, private val events: UiE
         val timeout = opts["timeout_ms"]?.toLongOrNull() ?: 10_000
         val gone = opts["gone"] == "1"
         var hit: Rect? = null
-        val elapsed = kotlinx.coroutines.runBlocking(Loop.Main) {
+        fun check(): Boolean {
+            val list = expr.evaluate(snapshot(all).doc, XPathConstants.NODESET) as NodeList
+            // Not there yet: one that doesn't show.
+            hit = (0 until list.length).firstNotNullOfOrNull { i ->
+                val el = list.item(i) as? Element ?: return@firstNotNullOfOrNull null
+                if (el.hasAttribute("off")) null else parseBounds(el.getAttribute("bounds"))
+            }
+            return if (gone) hit == null else hit != null
+        }
+        // The first check here, not in the wait, which swallows errors: a
+        // bad regex in matches() is BAD_ARG at once, not a TIMEOUT later.
+        val elapsed = if (check()) 0L else kotlinx.coroutines.runBlocking(Loop.Main) {
             events.waits.awaitPredicate(timeout) {
-                kotlinx.coroutines.withContext(Loop.Blocking) {
-                    val snap = snapshot(all)
-                    val list = expr.evaluate(snap.doc, XPathConstants.NODESET) as NodeList
-                    // Not there yet: one that doesn't show.
-                    val shown = (0 until list.length).firstNotNullOfOrNull { i ->
-                        val el = list.item(i) as? Element ?: return@firstNotNullOfOrNull null
-                        if (el.hasAttribute("off")) null else parseBounds(el.getAttribute("bounds"))
-                    }
-                    hit = shown
-                    if (gone) shown == null else shown != null
-                }
+                kotlinx.coroutines.withContext(Loop.Blocking) { check() }
             }
         }
         if (elapsed < 0) return err("TIMEOUT", (if (gone) "xpath_gone:" else "xpath_wait:") + q)

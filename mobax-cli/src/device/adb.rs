@@ -121,7 +121,7 @@ fn studio_context(conn: &mut Conn, src: &str) -> io::Result<Studio> {
     if query.uses_mine {
         let top = conn.call("state top")?;
         let top = String::from_utf8_lossy(&top);
-        dev.mine = top.split('/').next().map(str::trim).filter(|p| !p.is_empty() && !p.starts_with("ERR")).map(String::from);
+        dev.mine = top.split('/').next().map(str::trim).filter(|p| !p.is_empty() && *p != "null" && !p.starts_with("ERR")).map(String::from);
         if dev.mine.is_none() {
             return Err(io::Error::other("package:mine: no app in front"));
         }

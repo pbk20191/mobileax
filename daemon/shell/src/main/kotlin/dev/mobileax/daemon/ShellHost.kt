@@ -174,9 +174,9 @@ private class ChildProc(cmd: String, mergeErr: Boolean, input: Input) : ShellPro
     override fun kill() {
         try { p.outputStream.close() } catch (_: IOException) {}
         try { stdout.close() } catch (_: IOException) {}
-        if (!ended) {
-            Shell.terminate(pid)   // its children too
-            p.destroy()
-        }
+        // The tree first (sh included), then the Process: destroyed first,
+        // sh would be gone before `ps` is read and its children, reparented,
+        // left running (a `logcat | grep` with nobody reading).
+        if (!ended) Shell.terminate(pid) { p.destroy() }
     }
 }

@@ -180,19 +180,21 @@ internal class ByEngine(private val ua: UiAutomation, private val ctx: Context, 
                 // can't go on. Else a swipe, without UiObject2.scroll's wait
                 // for the scroll events to stop (~1.5 s): settling is the
                 // caller's job.
-                val more = scrollAction(o, content) ?: swipeMoved(q, o, finger, pct, speed)
+                val more = scrollAction(o, content) ?: swipeMoved(o, finger, pct, speed)
                 ok(if (more) "ok scroll" else "ok scroll end")
             }
             else -> { speed?.let { o.swipe(finger, pct, it) } ?: o.swipe(finger, pct); ok("ok swipe") }
         }
     }
 
-    /** Swipes inside [o]; whether its first rows moved (false: the end). */
-    private fun swipeMoved(q: Query, o: UiObject2, finger: Direction, pct: Float, speed: Int?): Boolean {
+    /** Swipes inside [o]; whether its first rows moved (false: the end). [o]
+     *  reads its children afresh, so it is the same list after the swipe
+     *  (finding it again would ignore nth and window). */
+    private fun swipeMoved(o: UiObject2, finger: Direction, pct: Float, speed: Int?): Boolean {
         val before = rows(o)
         if (speed != null) o.swipe(finger, pct, speed) else o.swipe(finger, pct)
-        val after = device.findObject(q.node)?.let { rows(it) } ?: return true
-        return after != before
+        val after = rows(o)
+        return after.isEmpty() || after != before
     }
 
     /** Where its first few children are and what they say. */
@@ -257,14 +259,19 @@ internal class ByEngine(private val ua: UiAutomation, private val ctx: Context, 
             val word = if (accept) "allow" else "deny"
             device.findObjects(By.res(Pattern.compile(".+:id/permission_\\w+_button")))
                 .firstOrNull { b -> b.resourceName?.substringAfter(":id/")?.split('_')?.contains(word) == true }
-        } else if (device.hasObject(By.res(Pattern.compile(".+:id/(alertTitle|alert_title|custom|message)")))) {
+        } else {
+            // An AlertDialog: its title or message and its button1..3. Apps
+            // use `:id/message` too, so the buttons must be there as well;
+            // without them, as a dialog with no framework ids.
+            val alert = device.hasObject(By.res(Pattern.compile(".+:id/(alertTitle|alert_title|custom|message)")))
             // One button (an OK-only notice) closes it either way.
             val order = if (accept) listOf("button1") else listOf("button2", "button3", "button1")
-            order.firstNotNullOfOrNull { id -> device.findObject(By.res(Pattern.compile(".+:id/$id"))) }
-        } else {
-            val row = dialogButtons() ?: return err("NOT_FOUND", "$verb: no dialog on screen")
-            // Material puts confirm on the right, dismiss on the left.
-            if (accept) row.last() else row.first()
+            (if (alert) order.firstNotNullOfOrNull { id -> device.findObject(By.res(Pattern.compile(".+:id/$id"))) } else null)
+                ?: run {
+                    val row = dialogButtons() ?: return err("NOT_FOUND", "$verb: no dialog on screen")
+                    // Material puts confirm on the right, dismiss on the left.
+                    if (accept) row.last() else row.first()
+                }
         }
         val b = button ?: return err("NOT_FOUND", "$verb: the dialog has no button for it")
         val label = labelOf(b) ?: b.resourceName
@@ -286,7 +293,9 @@ internal class ByEngine(private val ua: UiAutomation, private val ctx: Context, 
         val win = device.findWindows(By.Window.type(AccessibilityWindowInfo.TYPE_APPLICATION).active(true))
             .maxByOrNull { it.layer } ?: return null
         val wb = win.visibleBounds
-        if (screen.y <= 0 || (wb.width() >= screen.x && wb.height() >= screen.y * 9 / 10)) return null
+        // Most of the screen is the activity itself: a window's bounds leave
+        // out what covers it (a navigation bar at the side in landscape).
+        if (screen.y <= 0 || (wb.width() >= screen.x * 85 / 100 && wb.height() >= screen.y * 85 / 100)) return null
         // A title or message that isn't a button: not a popup menu, all items.
         if (!win.hasObject(By.clickable(false).text(Pattern.compile(".+", Pattern.DOTALL)))) return null
         val labelled = win.findObjects(By.clickable(true)).filter { labelOf(it) != null }

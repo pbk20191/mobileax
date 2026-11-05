@@ -59,7 +59,15 @@ internal class Screenshot(private val ua: UiAutomation) {
      * IDLE_MS (and not held by a stream) is closed. Guarded by mirrorsMutex.
      */
     private val lastUse = HashMap<Int, Long>()
-    private val held = HashMap<Int, Int>()
+    /** Streams on each mirror. A held mirror replaced (rotation, the cache
+     *  full) is [retired]: closed when its last stream lets go, not before. */
+    private val held = java.util.IdentityHashMap<Mirror, Int>()
+    private val retired = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Mirror, Boolean>())
+
+    /** Closes [m] now, or when its streams end. Under mirrorsMutex. */
+    private fun dispose(m: Mirror) {
+        if ((held[m] ?: 0) > 0) retired.add(m) else Loop.scope.launch { m.close() }
+    }
     private val recentShots = ArrayDeque<Long>()
 
     // Insertion-ordered cache keyed by long-edge resolution.
@@ -68,7 +76,7 @@ internal class Screenshot(private val ua: UiAutomation) {
         object : LinkedHashMap<Int?, Mirror?>(8, 0.75f, true) {
             override fun removeEldestEntry(e: MutableMap.MutableEntry<Int?, Mirror?>): Boolean {
                 if (size > MAX_CACHED_MIRRORS) {
-                    e.value?.let { m -> Loop.scope.launch { m.close() } }
+                    e.value?.let { dispose(it) }
                     return true
                 }
                 return false
@@ -131,7 +139,7 @@ internal class Screenshot(private val ua: UiAutomation) {
             val now = SystemClock.uptimeMillis()
             val idle = mirrorsMutex.withLock {
                 mirrors.keys.filterNotNull()
-                    .filter { (held[it] ?: 0) == 0 && now - (lastUse[it] ?: 0) >= IDLE_MS }
+                    .filter { k -> (mirrors[k]?.let { held[it] } ?: 0) == 0 && now - (lastUse[k] ?: 0) >= IDLE_MS }
                     .mapNotNull { k -> lastUse.remove(k); mirrors.remove(k) }
             }
             for (m in idle) {
@@ -163,15 +171,16 @@ internal class Screenshot(private val ua: UiAutomation) {
     suspend fun <T> withMirror(args: CaptureArgs, block: suspend (Mirror) -> T): T {
         check(mirrorAvailable) { "mirror unavailable" }
         val edge = resolveLongEdge(args)
-        val m = mirrorAt(edge)
-        mirrorsMutex.withLock { held[edge] = (held[edge] ?: 0) + 1 }
+        val m = mirrorAt(edge, hold = true)
         try {
             return block(m)
         } finally {
             withContext(NonCancellable) {
                 mirrorsMutex.withLock {
-                    held[edge] = (held[edge] ?: 1) - 1
+                    val left = (held[m] ?: 1) - 1
+                    if (left > 0) held[m] = left else held.remove(m)
                     lastUse[edge] = SystemClock.uptimeMillis()
+                    if (left <= 0 && retired.remove(m)) Loop.scope.launch { m.close() }
                 }
             }
         }
@@ -218,12 +227,17 @@ internal class Screenshot(private val ua: UiAutomation) {
     private suspend fun captureRegion(rect: android.graphics.Rect, args: CaptureArgs): ByteArray {
         val fit = if (args.longEdge > 0) args.longEdge else 768
         val quality = clampQuality(args.quality)
+        val screen = currentScreen()
+        // A mirror just made may have no frame yet: then as without one.
+        try {
+            mirrorIfWorth(max(sourceSize.x, sourceSize.y))?.let {
+                return it.encodeRegion(rect, screen.x, screen.y, fit, args.format, quality)
+            }
+        } catch (t: Throwable) {
+            Logx.w("screenshot: mirror region failed, falling back", t)
+        }
         return try {
-            val screen = currentScreen()
-            val mirror = mirrorIfWorth(max(sourceSize.x, sourceSize.y))
-            if (mirror != null) {
-                mirror.encodeRegion(rect, screen.x, screen.y, fit, args.format, quality)
-            } else withContext(Loop.Work) {
+            withContext(Loop.Work) {
                 // Only the element, composited at the size it is sent at.
                 val r = android.graphics.Rect(rect)
                 if (r.intersect(0, 0, screen.x, screen.y)) {
@@ -241,16 +255,19 @@ internal class Screenshot(private val ua: UiAutomation) {
         }
     }
 
-    private suspend fun mirrorAt(longEdge: Int): Mirror = mirrorsMutex.withLock {
+    /** The mirror for [longEdge], made if need be; [hold]: a stream's, counted in the same step. */
+    private suspend fun mirrorAt(longEdge: Int, hold: Boolean = false): Mirror = mirrorsMutex.withLock {
         lastUse[longEdge] = SystemClock.uptimeMillis()
         val dm = displayManager!!
         val have = mirrors[longEdge]
         // A SurfaceControl mirror is fixed to the orientation it was made in.
         if (have != null && have.display.viaSurfaceControl && have.display.rotation != MirrorDisplay.currentRotation(dm)) {
             mirrors.remove(longEdge)
-            have.close()
+            dispose(have)
         }
-        mirrors[longEdge] ?: Mirror.create(dm, sourceSize, longEdge).also { mirrors[longEdge] = it }
+        val m = mirrors[longEdge] ?: Mirror.create(dm, sourceSize, longEdge).also { mirrors[longEdge] = it }
+        if (hold) held[m] = (held[m] ?: 0) + 1
+        m
     }
 
     private fun currentRotation(): Int = displayManager?.let { MirrorDisplay.currentRotation(it) } ?: 0

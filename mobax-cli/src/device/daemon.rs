@@ -341,9 +341,11 @@ fn start(opts: &ConnectOpts) -> io::Result<(String, u16)> {
         Some(true) => return connect_instr(serial, port),
         Some(false) => {}
         None => {
-            // Fast path: the daemon already answers (either build). The common
-            // case when scripts re-run `mobax use` defensively before each step.
-            if ping_daemon(&serial, port).is_ok() {
+            // Fast path: the daemon already answers. The common case when
+            // scripts re-run `mobax use` defensively before each step. An
+            // instrumentation from another build (mobax was upgraded) is
+            // replaced below, as `use --instr` would.
+            if ping_daemon(&serial, port).is_ok() && !stale_instr(&serial) {
                 write_current(&serial);
                 let _ = state_cache::spawn_detached(&serial, port);
                 return Ok((serial, port));
@@ -475,6 +477,14 @@ fn connect_instr(serial: String, port: u16) -> io::Result<(String, u16)> {
         apk.display(),
         r.stdout
     )))
+}
+
+/// The instrumentation runs, and isn't the build of the APK found here.
+fn stale_instr(serial: &str) -> bool {
+    let running = device_sh(serial, &format!("pidof {PKG} >/dev/null && cat {DEVICE_FP} 2>/dev/null"));
+    let running = running.trim();
+    !running.is_empty()
+        && locate_apk().and_then(|apk| local_fingerprint(&apk)).is_ok_and(|fp| fp != running)
 }
 
 fn refuse_other_port(serial: &str, port: u16, running: Option<u16>) -> io::Result<()> {
