@@ -15,7 +15,8 @@ import kotlin.system.exitProcess
  * runs on the main thread, whose looper ActivityThread already runs; the
  * server and every coroutine live there (see [Loop]). start() is never
  * called: there are no tests, and the instrumentation lasts until `quit`,
- * `am force-stop` or the `am instrument` process going away.
+ * `am force-stop`, the `am instrument` process going away, or no client
+ * for a while on a physical device ([Lease]).
  */
 class MobaxInstrumentation : MonitoringInstrumentation() {
 

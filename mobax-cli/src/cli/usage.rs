@@ -12,6 +12,7 @@ Usage: mobax [--device SERIAL] [--json] <verb> [args]
 
 The agent loop:
   mobax use [SERIAL] [--instr|--jar]  connect a device, start the daemon (APK where it installs, else the jar)
+  mobax use --idle-exit S         leave after S s with no client (0: stay; default 30 on a device, stays on an emulator)
   mobax ui                        flat table of tappable nodes (the LLM input format)
   mobax tap \"Continue\"             find by text, tap centre
   mobax tap #back_btn             find by resource-id, tap centre

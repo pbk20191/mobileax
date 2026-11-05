@@ -311,7 +311,7 @@ pub(crate) enum UiFormat { Human, Interactive, Json, Xml }
 pub(crate) enum UiWindows { App, Active, All }
 
 pub(crate) fn parse_use(rest: &[&str]) -> Result<daemon::ConnectOpts, String> {
-    let mut opts = daemon::ConnectOpts { serial: None, port: None, instr: daemon::instr_default() };
+    let mut opts = daemon::ConnectOpts { serial: None, port: None, instr: daemon::instr_default(), idle_exit: daemon::idle_exit_default() };
     let mut i = 0;
     while i < rest.len() {
         match rest[i] {
@@ -326,6 +326,11 @@ pub(crate) fn parse_use(rest: &[&str]) -> Result<daemon::ConnectOpts, String> {
             }
             "--instr" => opts.instr = Some(true),
             "--jar" => opts.instr = Some(false),
+            "--idle-exit" => {
+                i += 1;
+                opts.idle_exit = Some(rest.get(i).ok_or("--idle-exit needs SECONDS")?
+                    .parse().map_err(|_| "invalid --idle-exit".to_string())?);
+            }
             serial if !serial.starts_with('-') && opts.serial.is_none() => {
                 opts.serial = Some(serial.to_string());
             }

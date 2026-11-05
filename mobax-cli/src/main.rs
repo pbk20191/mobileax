@@ -500,6 +500,7 @@ fn print_devices() -> io::Result<()> {
             serial: Some(rows[0].serial.clone()),
             port: None,
             instr: daemon::instr_default(),
+            idle_exit: daemon::idle_exit_default(),
         };
         if let Ok((serial, _)) = daemon::connect(&opts) {
             crate::errln!("daemon up on {serial} (auto)");
@@ -529,7 +530,7 @@ fn print_devices() -> io::Result<()> {
 /// verbs work without an explicit `mobax use` first. Returns a short human
 /// reason on the error path.
 fn try_auto_use(serial: &str, port: u16) -> Result<(), String> {
-    let opts = daemon::ConnectOpts { serial: Some(serial.to_string()), port: Some(port), instr: daemon::instr_default() };
+    let opts = daemon::ConnectOpts { serial: Some(serial.to_string()), port: Some(port), instr: daemon::instr_default(), idle_exit: daemon::idle_exit_default() };
     let (serial, _) = daemon::connect(&opts).map_err(|e| format!("starting the daemon failed: {e}"))?;
     crate::errln!("daemon up on {serial} (auto)");
     Ok(())

@@ -280,6 +280,9 @@ pub(crate) struct ConnectOpts {
     /// The instrumentation APK (true) or the app_process jar (false); None
     /// tries the APK and falls back to the jar.
     pub instr: Option<bool>,
+    /// Seconds without a client before the daemon leaves (0: never); None
+    /// keeps the daemon's own default (a device leaves, an emulator stays).
+    pub idle_exit: Option<u64>,
 }
 
 /// `MOBAX_DAEMON=instr|jar` picks the build where `use` isn't told.
@@ -289,6 +292,11 @@ pub(crate) fn instr_default() -> Option<bool> {
         Ok("jar") => Some(false),
         _ => None,
     }
+}
+
+/// `MOBAX_IDLE_EXIT=SECONDS` sets `use --idle-exit` where it isn't given.
+pub(crate) fn idle_exit_default() -> Option<u64> {
+    std::env::var("MOBAX_IDLE_EXIT").ok()?.trim().parse().ok()
 }
 
 /// The APK's minSdk: older devices get the jar.
@@ -304,6 +312,17 @@ pub(crate) struct DisconnectOpts {
 /// `mobax use`: make sure the daemon runs on the device and answers.
 /// Returns the device's serial and the daemon instance (port).
 pub(crate) fn connect(opts: &ConnectOpts) -> io::Result<(String, u16)> {
+    let (serial, port) = start(opts)?;
+    if let Some(sec) = opts.idle_exit {
+        // An older daemon doesn't know the verb: it keeps running as before.
+        if let Err(e) = ask_daemon(&serial, port, format!("idle_exit {sec}").as_bytes(), b"ok", Duration::from_secs(2)) {
+            eprintln!("mobax: the daemon did not take --idle-exit: {e}");
+        }
+    }
+    Ok((serial, port))
+}
+
+fn start(opts: &ConnectOpts) -> io::Result<(String, u16)> {
     // Talk to the adb-server directly over its host protocol. Each query is
     // a sub-ms round-trip vs ~40ms for spawning the adb subprocess. Falls
     // back to the subprocess if the server isn't reachable (e.g. first

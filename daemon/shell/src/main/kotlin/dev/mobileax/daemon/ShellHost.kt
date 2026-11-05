@@ -17,6 +17,7 @@ import java.io.File
 import java.io.IOException
 import java.io.OutputStream
 import kotlin.concurrent.Volatile
+import kotlin.system.exitProcess
 
 /**
  * The app_process build: the daemon runs as the shell uid (2000), with no
@@ -125,6 +126,11 @@ internal object ShellHost : Host {
 
     /** We are the shell: the command is our own child, `sh -c`. */
     override fun openShell(cmd: String, mergeErr: Boolean, input: Input): ShellProc = ChildProc(cmd, mergeErr, input)
+
+    override fun exit(reason: String) {
+        Logx.boot("mobaxd $reason; exiting")
+        exitProcess(0)
+    }
 }
 
 private class ChildProc(cmd: String, mergeErr: Boolean, input: Input) : ShellProc() {

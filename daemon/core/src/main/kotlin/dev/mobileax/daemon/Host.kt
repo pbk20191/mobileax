@@ -36,6 +36,14 @@ interface Host {
     /** Starts [cmd], one line of sh, as the shell uid. Blocks briefly: off the main looper. */
     fun openShell(cmd: String, mergeErr: Boolean, input: Shell.Input): Shell.ShellProc
 
+    /**
+     * Ends the daemon on purpose (`quit`, no clients left), with [reason]
+     * in the log. The instrumentation finishes, so `am instrument` reports
+     * a result instead of a crash; app_process exits. Main thread; may
+     * return before the process is gone.
+     */
+    fun exit(reason: String)
+
     companion object {
         @Volatile var current: Host? = null
 
@@ -66,6 +74,7 @@ fun serve(port: Int, connect: suspend () -> Pair<Context, UiAutomation>, onInitF
     // `quit` exits the process right after (Dispatch).
     server = MobaxServer(port, Dispatch(ready, onQuit = { server.close() }))
     server.start()
+    Lease.start { reason -> server.close(); Host.it.exit(reason) }
     Loop.scope.launch {
         try {
             val built = withContext(Loop.Work) {

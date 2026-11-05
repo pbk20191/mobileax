@@ -5,7 +5,6 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.nio.charset.StandardCharsets
-import kotlin.system.exitProcess
 
 /**
  * Per-connection command loop. Same order and framing as the old
@@ -33,7 +32,13 @@ internal class Dispatch(
                 val head = if (sp >= 0) cmd.substring(0, sp) else cmd
                 when (head) {
                     "ping" -> { c.send(PONG); continue }
-                    "quit" -> { onQuit(); c.send(BYE); c.flush(); exitProcess(0) }
+                    "quit" -> { onQuit(); c.send(BYE); c.flush(); Host.it.exit("quit"); return }
+                    "idle_exit" -> {
+                        val sec = Server.positional(cmd)?.toLongOrNull()
+                        if (sec == null) c.send(Server.errBytes("idle_exit-needs-seconds"))
+                        else { Lease.setLinger(sec * 1000); c.send(OK) }
+                        continue
+                    }
                 }
                 val s = ready.await()
                 when (head) {
@@ -152,6 +157,7 @@ internal class Dispatch(
     private companion object {
         val PONG = "pong".toByteArray()
         val BYE = "bye".toByteArray()
+        val OK = "ok".toByteArray()
         val READY = "ready".toByteArray()
         val GESTURES = setOf("tap", "swipe", "down", "move", "up", "scroll", "key", "text", "swipe_dir", "pinch",
             "wait_for_idle", "event_seq", "settle", "settle_dump", "wait_for_text", "wait_for_activity", "tap_and_dump", "tap_and_settle")

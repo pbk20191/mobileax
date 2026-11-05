@@ -1,10 +1,12 @@
 package dev.mobileax.daemon
 
+import android.app.Activity
 import android.app.Instrumentation
 import android.app.UiAutomation
 import android.content.Context
 import android.os.Bundle
 import androidx.test.platform.app.InstrumentationRegistry
+import kotlin.system.exitProcess
 
 /**
  * Process-wide handles, all read from [InstrumentationRegistry] (registered
@@ -37,6 +39,27 @@ internal object InstrHost : Host {
 
     override fun openShell(cmd: String, mergeErr: Boolean, input: Shell.Input): Shell.ShellProc =
         UaShell.open(cmd, mergeErr, input)
+
+    /**
+     * finish(), as AndroidJUnitRunner ends a run: AMS reports the result to
+     * `am instrument` and kills the process. Off the main thread, where
+     * MonitoringInstrumentation waits for activities (it throws on main).
+     * If AMS hasn't killed us within [FINISH_GRACE_MS], exit anyway.
+     */
+    override fun exit(reason: String) {
+        Logx.boot("mobaxd $reason; finishing")
+        Thread({
+            try {
+                instr.finish(Activity.RESULT_OK, Bundle().apply { putString("mobaxd", reason) })
+            } catch (t: Throwable) {
+                Logx.w("finish failed", t)
+            }
+            Thread.sleep(FINISH_GRACE_MS)
+            exitProcess(0)
+        }, "mobax-finish").start()
+    }
+
+    private const val FINISH_GRACE_MS = 5_000L
 }
 
 /** Connected on first use; the same flags return the cached instance. */

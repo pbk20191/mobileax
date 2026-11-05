@@ -64,6 +64,8 @@ internal class MobaxServer(private val port: Int, private val dispatch: Dispatch
                 continue
             }
             val c = Conn(socket)
+            Lease.opened()
+            c.job.invokeOnCompletion { Loop.post { Lease.closed() } }
             c.scope.launch { dispatch.session(c) }
         }
     }

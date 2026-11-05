@@ -34,6 +34,14 @@ instrumentation's (`build/mobaxd.apk`). Each entry point sets
 calls `serve()`. The shell is where they differ most: the jar spawns
 `sh -c` as its own child, the APK goes through UiAutomation.
 
+On a physical device either build leaves once no client has been connected
+for 30 s (`Lease`), so unplugging the cable or quitting the host frees the
+device's UiAutomation for other tools. Connections that stay open hold it:
+the state watcher `use` spawns, the MCP server's pooled sessions, a mirror.
+The next `use`, or any verb that finds no daemon, starts it again. An
+emulator keeps its daemon until `drop`. `use --idle-exit S` (or
+`MOBAX_IDLE_EXIT=S`) overrides either default; 0 keeps it up.
+
 Either build listens on the abstract Unix socket `@mobaxd_<port>`
 (the host opens it through the adb server: `host:transport:SERIAL`, then
 `localabstract:mobaxd_<port>`, with no host port forward) and refuses
