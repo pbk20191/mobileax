@@ -1,12 +1,13 @@
 {
  "name": "s6-toast",
- "note": "A result shown only as a toast: tapping Build number in About phone. A toast leaves no row, so the action's reply must carry it (toast: …). On this image developer options are on, so every tap toasts; on a fresh image the toasts start at the third tap. Three taps never turn developer options on.",
+ "note": "A result shown only as a toast: the bench app's one button (bench/toast-app; `./gradlew benchToastApk` first, and run the bench from the repo root). A toast leaves no row, so the action's reply must carry it (toast: …). Settings' Build number used to be the toast here, but Settings ignores it while the instrumentation daemon runs the device as a monkey.",
  "setup": [
-  {"tool": "close", "args": {"package": "com.android.settings"}},
+  {"adb": ["install", "-r", "build/bench-toast.apk"]},
+  {"tool": "close", "args": {"package": "dev.mobileax.bench.toast"}},
   {"tool": "go", "args": {"key": "home"}}
  ],
  "steps": [
-  {"tool": "open", "args": {"app": "com.android.settings/.Settings$MyDeviceInfoActivity"}}
+  {"tool": "open", "args": {"app": "dev.mobileax.bench.toast"}}
  ],
- "check": {"tool": "tap", "args": {"target": ":has-text(\"빌드 번호\")", "scroll": true}, "expect": "toast:"}
+ "check": {"tool": "tap", "args": {"target": "Show toast"}, "expect": "toast:"}
 }

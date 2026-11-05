@@ -1,97 +1,36 @@
 /*
- * Build for the on-device daemon in src/.
+ * Build for the on-device daemon, three modules under daemon/:
  *
- * Not a launchable app: Main is started by app_process with the APK on
- * CLASSPATH (app_process only needs classes.dex inside a zip). AGP handles
- * the SDK (platform + build-tools, downloaded if missing), Kotlin, and R8;
- * mobaxJar copies the release APK to build/mobax.jar, the path the CLI, installer
- * and release workflow expect.
+ *  - core:  the daemon itself (a library)
+ *  - shell: started by app_process as the shell uid → build/mobax.jar
+ *  - instr: installed and run by `am instrument` → build/mobaxd.apk
  *
- *   ./gradlew mobaxJar                       build build/mobax.jar
+ * Not a launchable app either way. AGP handles the SDK (platform +
+ * build-tools, downloaded if missing), Kotlin, and R8.
+ *
+ *   ./gradlew mobaxJar mobaxApk              build both
+ *   ./gradlew benchToastApk                  the agent benchmark's toast app
  */
-plugins {
-    id("com.android.application")
-}
 
-// Gradle's own outputs stay out of build/, which holds only the deployable jar.
+// Gradle's own outputs stay out of build/, which holds only the deployables.
 layout.buildDirectory = layout.projectDirectory.dir("build-gradle")
 
-android {
-    namespace = "dev.mobileax.daemon"
-    compileSdk = 36
-
-    defaultConfig {
-        minSdk = 28
-        targetSdk = 36
-    }
-
-    sourceSets {
-        named("main") {
-            manifest.srcFile("AndroidManifest.xml")
-            java.setSrcDirs(listOf("src"))
-            kotlin.setSrcDirs(listOf("src"))
-            res.setSrcDirs(emptyList<String>())
-            resources.setSrcDirs(emptyList<String>())
-        }
-    }
-
-    buildTypes {
-        release {
-            isMinifyEnabled = true
-            isShrinkResources = true
-            proguardFiles("proguard-rules.pro")
-            // app_process doesn't check signatures; leave the APK unsigned.
-            signingConfig = null
-            vcsInfo.include = false
-        }
-    }
-
-    packaging {
-        // Compress classes.dex: mobax.jar is pushed over adb and shipped in release
-        // tarballs, and nothing gains from mapping it uncompressed.
-        dex.useLegacyPackaging = true
-        resources {
-            // Kotlin reflection/debug metadata the daemon never reads. Keep
-            // META-INF/services: Dispatchers.Main is found through it.
-            excludes += listOf("kotlin/**", "DebugProbesKt.bin", "META-INF/*.version")
-        }
-    }
-
-    dependenciesInfo {
-        includeInApk = false
-    }
-
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    lint {
-        checkReleaseBuilds = false
-    }
-}
-
-kotlin {
-    compilerOptions {
-        // Drop Intrinsics.checkNotNull* calls: R8 can't remove them, and the
-        // daemon has no Java callers that could pass unexpected nulls.
-        freeCompilerArgs.addAll("-Xno-param-assertions", "-Xno-call-assertions", "-Xno-receiver-assertions")
-    }
-}
-
-dependencies {
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
-    implementation("androidx.test.uiautomator:uiautomator:2.4.0")
-}
-
-val mobaxJar = tasks.register<Copy>("mobaxJar") {
+fun copyApk(name: String, module: String, out: String, what: String) = tasks.register<Copy>(name) {
     group = "build"
-    description = "Builds build/mobax.jar (the release APK) for app_process."
-    from(tasks.named("assembleRelease").map { layout.buildDirectory.dir("outputs/apk/release") }) {
+    description = what
+    dependsOn("$module:assembleRelease")
+    from(project(module).layout.buildDirectory.dir("outputs/apk/release")) {
         include("*.apk")
-        rename { "mobax.jar" }
+        rename { out }
     }
     into(layout.projectDirectory.dir("build"))
 }
 
-tasks.named("assemble") { dependsOn(mobaxJar) }
+val mobaxJar = copyApk("mobaxJar", ":daemon:shell", "mobax.jar", "Builds build/mobax.jar for app_process.")
+val mobaxApk = copyApk("mobaxApk", ":daemon:instr", "mobaxd.apk", "Builds build/mobaxd.apk for am instrument.")
+copyApk("benchToastApk", ":bench:toast-app", "bench-toast.apk", "Builds build/bench-toast.apk for the agent benchmark (s6).")
+
+tasks.register("assemble") {
+    group = "build"
+    dependsOn(mobaxJar, mobaxApk)
+}

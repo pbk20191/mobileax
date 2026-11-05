@@ -65,7 +65,7 @@ pub(crate) fn bench(host: &str, port: u16, n: u32, json_output: bool) -> io::Res
             meta.top_label(),
             std::env::consts::OS,
             std::env::consts::ARCH,
-            env!("CARGO_PKG_VERSION"),
+            crate::VERSION,
         );
         crate::errln!(
             "{:<30}  {:>9}  {:>9}  {:>9}  {:>9}  {:>9}  {:>12}  {:>6}",
@@ -273,7 +273,7 @@ pub(crate) fn bench_json(n: u32, meta: &BenchMeta, results: &[BenchResult]) -> S
         .s("top_activity", &meta.top_activity)
         .s("host_os", std::env::consts::OS)
         .s("host_arch", std::env::consts::ARCH)
-        .s("mobax_version", env!("CARGO_PKG_VERSION"))
+        .s("mobax_version", crate::VERSION)
         .finish();
     let mut cases = String::from("[");
     for (i, r) in results.iter().enumerate() {

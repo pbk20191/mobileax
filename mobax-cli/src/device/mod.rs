@@ -3,5 +3,7 @@
 
 pub(crate) mod adb;
 pub(crate) mod daemon;
+pub(crate) mod install;
+pub(crate) mod logquery;
 pub(crate) mod session;
 pub(crate) mod state_cache;

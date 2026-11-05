@@ -41,6 +41,8 @@ struct Hit {
     flags: String,
     bounds: (i32, i32, i32, i32),
     priority: Priority,
+    /// Nothing of the matched node shows: where it is (the dump's `off`).
+    off: Option<String>,
 }
 
 /// Session-aware tap-by-text. Honours retries/--visible/--clickable/--unique
@@ -55,6 +57,9 @@ pub fn run_session(
     verb: &'static str,
 ) -> io::Result<()> {
     let flags = sess.defaults.clone();
+    if query.starts_with("by:") {
+        return tap_by(sess, query, reporter, verb, &flags);
+    }
     let total = flags.total_attempts();
     let mut last_err: Option<ErrInfo> = None;
     let mut scrolls = 0;
@@ -67,7 +72,14 @@ pub fn run_session(
             sess.invalidate_dump();
         }
         attempt += 1;
-        let hits = match sess.with_dump(|tree| {
+        // `xpath:` runs on the device; its nodes come back as the dump has them.
+        let hits = if let Some(xp) = query.strip_prefix("xpath:") {
+            let body = sess.conn.call(&format!("xpath_find q={xp}"))?;
+            if let Some(e) = parse_err(&body) {
+                return Err(reporter.fail(verb, e));
+            }
+            xpath_hits(&body, &flags)?
+        } else { match sess.with_dump(|tree| {
             // The app's windows, so a dialog or popup over the activity
             // is searched too (and wins ties — see find_in).
             let roots = crate::json::app_roots(tree);
@@ -88,8 +100,23 @@ pub fn run_session(
                 if let Some(info) = io_err_to_info(&e) { last_err = Some(info); continue; }
                 return Err(e);
             }
-        };
+        } };
         match candidate(&hits, &flags) {
+            // Off screen: its bounds are cut at one edge (even inverted), so
+            // their centre can land on something else. Scroll toward it.
+            Ok(hit) if hit.off.is_some() && scrolls < MAX_SCROLLS => {
+                let dir = match hit.off.as_deref() {
+                    Some("below") => "up",
+                    Some("above") => "down",
+                    Some("right") => "left",
+                    _ => "right",
+                };
+                scrolls += 1;
+                attempt -= 1;
+                sess.conn.call(&format!("swipe_dir {dir}"))?;
+                sess.conn.call("wait_for_idle idle_ms=200 timeout_ms=2000")?;
+                continue;
+            }
             Ok(hit) => {
                 let (l, t, r, b) = hit.bounds;
                 let cx = (l + r) / 2;
@@ -312,6 +339,7 @@ fn id_hit(node: &Value, flags: &ActionFlags) -> Option<Hit> {
         text: field("text"), desc: field("desc"), cls: field("cls"), rid: field("rid"),
         flags: flag_str, bounds,
         priority: Priority::ExactText,
+        off: obj_get(node, "off").and_then(as_str).map(str::to_string),
     })
 }
 
@@ -382,6 +410,7 @@ fn find_all_within(root: &Value, screen_area: i64, query: &str, flags: &ActionFl
             flags: flag_str,
             bounds,
             priority: pri,
+            off: obj_get(node, "off").and_then(as_str).map(str::to_string),
         });
         Some(())
     });
@@ -636,4 +665,42 @@ mod tests {
         assert_eq!(hits[0].text, "闲鱼");
         assert_eq!(hits[0].bounds, (400, 1500, 600, 1700));
     }
+}
+
+/// The nodes `xpath_find` sent back, in document order (the window on top
+/// first), as tap candidates.
+fn xpath_hits(body: &[u8], flags: &crate::flags::ActionFlags) -> io::Result<Vec<Hit>> {
+    let text = std::str::from_utf8(body).map_err(|e| io::Error::other(format!("xpath_find: {e}")))?;
+    let json = crate::json::parse(text).map_err(|e| io::Error::other(format!("xpath_find: {e}")))?;
+    if obj_get(&json, "value").is_some() {
+        return Err(io::Error::other("tap: that XPath gives a value, not nodes"));
+    }
+    Ok(obj_get(&json, "nodes").and_then(crate::json::as_arr).map(|a| a.iter().filter_map(|n| id_hit(n, flags)).collect())
+        .unwrap_or_default())
+}
+
+/// `tap by:QUERY`: the device finds the node with UiAutomator's By, live,
+/// and clicks it (waiting up to --timeout for it to show).
+fn tap_by(
+    sess: &mut Session,
+    query: &str,
+    reporter: &Reporter,
+    verb: &'static str,
+    flags: &crate::flags::ActionFlags,
+) -> io::Result<()> {
+    let mut wire = String::from("by_tap");
+    if let Some(t) = flags.timeout_ms {
+        wire.push_str(&format!(" timeout_ms={t}"));
+    }
+    if let Some(n) = flags.nth {
+        wire.push_str(&format!(" nth={n}"));
+    }
+    wire.push_str(&format!(" q={query}"));
+    let body = sess.conn.call(&wire)?;
+    sess.invalidate_dump();
+    if let Some(e) = parse_err(&body) {
+        return Err(reporter.fail(verb, e));
+    }
+    reporter.ok(verb, String::from_utf8_lossy(&body).trim_end(),
+        crate::json_out::Obj::new().s("query", query))
 }

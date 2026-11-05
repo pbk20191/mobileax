@@ -96,7 +96,10 @@ pub(crate) fn resolve_fill_selector(conn: &mut Conn, sel_in: &str, flags: &flags
                 // An input widget among the matches wins; else the first match.
                 matches.iter().find(|n| is_input_widget(n)).or(matches.first()).map(|n| node_to_daemon_selector(n))
             }
-            None => find_fill_target(&roots, sel_in).map(node_to_daemon_selector),
+            // A label first; a bare class name (`EditText`) no label carries
+            // means that class: the shown field of it, the focused one first.
+            None => find_fill_target(&roots, sel_in).map(node_to_daemon_selector)
+                .or_else(|| class_name(sel_in).then(|| class_target(&roots, sel_in)).flatten()),
         };
         if let Some(sel) = found {
             return Ok(sel);
@@ -105,11 +108,32 @@ pub(crate) fn resolve_fill_selector(conn: &mut Conn, sel_in: &str, flags: &flags
             return Err(io::Error::other(if css.is_some() {
                 format!("fill: no node matched {sel_in:?}")
             } else {
-                format!("fill: no input widget matched {sel_in:?} — pass a selector                          (`#id`, `EditText[hint~=...]`) or daemon grammar (`id=...`)")
+                format!("fill: no input widget matched {sel_in:?} — pass a selector (`#id`, `EditText[hint~=...]`) or daemon grammar (`id=...`)")
             }));
         }
         std::thread::sleep(std::time::Duration::from_millis(150));
     }
+}
+
+/// `EditText`, `android.widget.EditText`: a class name, not a label.
+fn class_name(q: &str) -> bool {
+    let simple = q.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+        && q.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$');
+    let qualified = q.contains('.') && q.split('.').all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$'));
+    simple || qualified
+}
+
+/// The node of class [cls] (simple or full name) to fill: on screen, the
+/// focused one first.
+fn class_target(roots: &[&json::Value], cls: &str) -> Option<String> {
+    let sels = selector::Selector::parse(cls).ok()?;
+    let ctx = selector::MatchCtx::from_roots(roots.to_vec());
+    let mut shown: Vec<&json::Value> = selector::find_all_with(&ctx, &sels).into_iter()
+        .filter(|n| selector::get_str(n, "off").is_none())
+        .filter(|n| selector::get_str(n, "flags").is_some_and(|f| f.contains('v')))
+        .collect();
+    shown.sort_by_key(|n| !selector::get_str(n, "flags").is_some_and(|f| f.contains('F')));
+    shown.first().map(|n| node_to_daemon_selector(n))
 }
 
 pub(crate) fn is_input_widget(node: &json::Value) -> bool {
@@ -327,5 +351,19 @@ pub(crate) fn fill_into(
                 .s("query", selector)
                 .s("text", text)
                 .s("method", method));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_bare_class_name_reads_as_a_class() {
+        use super::class_name;
+        assert!(class_name("EditText"));
+        assert!(class_name("android.widget.EditText"));
+        assert!(!class_name("email"));
+        assert!(!class_name("Search settings"));
+        assert!(!class_name("검색"));
+        assert!(!class_name("a..b"));
     }
 }

@@ -11,6 +11,7 @@ use std::fs::File;
 use std::io::{self, Write};
 
 use crate::{state_cache, Conn};
+use crate::device::logquery;
 use crate::Connect;
 
 #[derive(Debug)]
@@ -38,8 +39,9 @@ pub(crate) enum Cmd {
 pub(crate) struct LogcatQuery {
     /// logcat argv (buffers, -d / -t, -v, -e, filter specs, raw extras).
     pub args: Vec<String>,
-    /// Becomes `--pid=` for the package's main process, resolved on the device.
-    pub pkg: Option<String>,
+    /// An Android Studio Logcat query, matched on the host (logquery.rs);
+    /// `args` then asks for `-v threadtime -v uid`.
+    pub studio: Option<String>,
     /// Becomes `-T <epoch>`: this many seconds back on the device's clock.
     pub since_secs: Option<u64>,
     /// Keep the last N lines on the host. logcat's own `-t` counts lines
@@ -62,6 +64,69 @@ impl LogcatQuery {
             !self.exclude.iter().any(|x| line.contains(x.as_str()))
         }
     }
+}
+
+/// What `mobax logs` prints of each line: logcat's as is, or, under a
+/// Studio query, the matching entries as plain `threadtime`.
+struct Lines<'a> {
+    q: &'a LogcatQuery,
+    studio: Option<Studio>,
+}
+
+struct Studio {
+    query: logquery::Query,
+    dev: logquery::Device,
+    uid_filter: UidFilter,
+}
+
+/// How the device narrows logcat to some uids.
+#[derive(Clone, Copy)]
+enum UidFilter {
+    /// logcat's `--uid` (Android 11+).
+    Flag,
+    /// The daemon's `logcat_uid`, logcat piped through grep (Android 10 and older).
+    Grep,
+    /// A daemon older than `logcat_uid`: the whole buffer, matched on the host.
+    None,
+}
+
+impl Lines<'_> {
+    fn render(&self, line: &str) -> Option<String> {
+        if !self.q.keeps(line) {
+            return None;
+        }
+        let Some(st) = &self.studio else { return Some(line.to_string()) };
+        let e = logquery::parse_entry(line)?;
+        st.query.matches(&e, &st.dev).then_some(e.plain)
+    }
+}
+
+/// Reads what a Studio query needs before logcat starts: which packages own
+/// which uid, the running processes, and (for `package:mine`) the app in front.
+fn studio_context(conn: &mut Conn, src: &str) -> io::Result<Studio> {
+    let query = logquery::parse(src).map_err(io::Error::other)?;
+    let mut dev = logquery::Device::default();
+    dev.read_packages(&shell_capture(conn, "shell pm list packages -U")?);
+    // The daemon's `shell` runs one argv (no `;`, `&&`): its own round trip.
+    let uid_filter = if shell_capture(conn, "shell logcat -d -t 1 --uid=0").is_ok() {
+        UidFilter::Flag
+    } else {
+        // Without uids, logcat_uid answers with an error naming itself.
+        match shell_capture(conn, "logcat_uid") {
+            Err(e) if e.to_string().contains("UNKNOWN_CMD") => UidFilter::None,
+            _ => UidFilter::Grep,
+        }
+    };
+    dev.read_processes(&shell_capture(conn, "shell ps -A -o PID,NAME")?);
+    if query.uses_mine {
+        let top = conn.call("state top")?;
+        let top = String::from_utf8_lossy(&top);
+        dev.mine = top.split('/').next().map(str::trim).filter(|p| !p.is_empty() && *p != "null" && !p.starts_with("ERR")).map(String::from);
+        if dev.mine.is_none() {
+            return Err(io::Error::other("package:mine: no app in front"));
+        }
+    }
+    Ok(Studio { query, dev, uid_filter })
 }
 
 // ---------- parsers ----------
@@ -219,49 +284,60 @@ fn parse_exit_trailer(b: &[u8]) -> Option<i32> {
 /// an error.
 fn run_logcat(conn: &mut Conn, q: &LogcatQuery) -> io::Result<()> {
     let mut wire = String::from("logcat");
-    if let Some(pkg) = &q.pkg {
-        let pids = shell_capture(conn, &format!("shell pidof {pkg}"))
-            .map_err(|_| io::Error::other(format!("{pkg} is not running")))?;
-        // pidof lists every process of the package; the main one is first.
-        let pid = pids.split_whitespace().next()
-            .ok_or_else(|| io::Error::other(format!("{pkg} is not running")))?;
-        wire.push_str(&format!(" --pid={pid}"));
-    }
+    let lines = Lines { q, studio: q.studio.as_deref().map(|s| studio_context(conn, s)).transpose()? };
     if let Some(secs) = q.since_secs {
         // The device's clock, not the host's: emulators and phones drift.
         let now: u64 = shell_capture(conn, "shell date +%s")?.trim().parse()
             .map_err(|_| io::Error::other("since: could not read the device clock"))?;
         wire.push_str(&format!(" -T {}.000", now.saturating_sub(secs)));
     }
+    // A query limited to packages is narrowed on the device too: the
+    // buffer can be megabytes, the app's share of it far less. logcat's
+    // --uid where it has one (Android 11+), else the daemon's grep. Uids of
+    // the primary user only, as the host match goes by app id: an app's
+    // lines in a work profile need `-- --uid=…` or no package term.
+    let uids = lines.studio.as_ref().and_then(|st| st.dev.uids_for(&st.query.expr).map(|u| (u, st.uid_filter)));
+    if let Some((uids, narrow)) = &uids {
+        if uids.is_empty() {
+            return Ok(());   // no package matches
+        }
+        let list = uids.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
+        match narrow {
+            UidFilter::Flag => wire.push_str(&format!(" --uid={list}")),
+            UidFilter::Grep => wire = format!("logcat_uid {list}{}", &wire["logcat".len()..]),
+            UidFilter::None => {}
+        }
+    }
     for a in &q.args { wire.push(' '); wire.push_str(a); }
     conn.send_cmd(&wire)?;
     let Some(n) = q.tail else {
-        let mut out = LineFilter { q, out: crate::output::stdout(), partial: Vec::new() };
+        let mut out = LineFilter { lines: &lines, out: crate::output::stdout(), partial: Vec::new() };
         conn.recv_chunks_to(&mut out)?;
         return out.finish();
     };
     let mut all = Vec::new();
     conn.recv_chunks_to(&mut all)?;
     let text = String::from_utf8_lossy(&all);
-    let lines: Vec<&str> = text.lines().filter(|l| q.keeps(l)).collect();
+    let kept: Vec<String> = text.lines().filter_map(|l| lines.render(l)).collect();
     let mut out = crate::output::stdout();
-    for l in &lines[lines.len().saturating_sub(n)..] {
+    for l in &kept[kept.len().saturating_sub(n)..] {
         writeln!(out, "{l}")?;
     }
     out.flush()
 }
 
-/// Passes whole lines that `LogcatQuery::keeps` through while streaming.
+/// Passes whole lines through [Lines::render] while streaming.
 struct LineFilter<'a, W: Write> {
-    q: &'a LogcatQuery,
+    lines: &'a Lines<'a>,
     out: W,
     partial: Vec<u8>,
 }
 
 impl<W: Write> LineFilter<'_, W> {
     fn emit(&mut self, line: &[u8]) -> io::Result<()> {
-        if self.q.keeps(String::from_utf8_lossy(line).trim_end()) {
-            self.out.write_all(line)?;
+        if let Some(l) = self.lines.render(String::from_utf8_lossy(line).trim_end()) {
+            self.out.write_all(l.as_bytes())?;
+            self.out.write_all(b"\n")?;
         }
         Ok(())
     }
@@ -298,6 +374,11 @@ fn shell_capture(conn: &mut Conn, wire: &str) -> io::Result<String> {
         let frame = conn.read_frame()?;
         if frame.is_empty() { break; }
         if out.is_empty() && frame.starts_with(b"ERR:") {
+            // A stream's error is followed by its end frame; an unknown
+            // verb's is the whole reply. Keep the connection in step.
+            if !frame.windows(11).any(|w| w == b"UNKNOWN_CMD") {
+                let _ = conn.read_frame();
+            }
             return Err(io::Error::other(String::from_utf8_lossy(&frame).into_owned()));
         }
         if let Some(code) = parse_exit_trailer(&frame) {

@@ -11,7 +11,8 @@ mobax — drive Android from the shell. Built for LLM agents and humans.
 Usage: mobax [--device SERIAL] [--json] <verb> [args]
 
 The agent loop:
-  mobax use [SERIAL]              connect a device, start the daemon
+  mobax use [SERIAL] [--instr|--jar]  connect a device, start the daemon (APK where it installs, else the jar)
+  mobax use --idle-exit S         leave after S s with no client (0: stay; default 30 on a device, stays on an emulator)
   mobax ui                        flat table of tappable nodes (the LLM input format)
   mobax tap \"Continue\"             find by text, tap centre
   mobax tap #back_btn             find by resource-id, tap centre
@@ -28,6 +29,8 @@ Selectors (CSS-like, Playwright-inspired):
   mobax find '[text=\"sign in\" i]'           case-insensitive (any operator)
   mobax find '[text=/sign\\s*in/i]'           regex search; also :text-matches(\"re\", \"i\")
   mobax find 'LinearLayout:has(TextView[text=Wi-Fi])'   the row holding it (innermost)
+  mobax tap 'by:res=title text~=Wi-Fi'      UiAutomator By, matched live on the device
+                                             (tap/find/wait; see docs/wire.md)
   Pseudos: :visible :clickable :enabled :focused :checkable :checked
            :editable :heading :has-text(\"x\") :text-is(\"x\") :text-matches(\"re\")
            :in(SEL) :has(SEL) :below(SEL) :right-of(SEL) :near(SEL, PX)
@@ -72,10 +75,13 @@ More verbs:
   Data        mobax sms | mobax calls | mobax contacts | mobax calendar | mobax notif | mobax clip
               mobax location          last-known GPS fix per provider [--json]
   System      mobax prop [KEY [VAL]] | mobax settings [NS [KEY [VAL]]]
-  Diagnostics mobax logs [--tail N | --follow] [--pkg PKG | --pid N] [--level E]
+  Diagnostics mobax logs [QUERY] [--tail N | --follow] [--pkg PKG | --pid N] [--level E]
                       [--tag T[:L]]… [--grep RE]… [--exclude TEXT]… [-i]
                       [--since 5m] [--format brief] [--crash | --buffer B]
                       [--clear] [-- LOGCAT ARGS…]  | mobax events
+                      QUERY is Android Studio's Logcat filter: 'package:mine level:W'
+                      'tag:OkHttp -tag:chatty' 'message~:time.?out' 'is:crash age:5m'
+                      (same key ORs, others AND; | & ( ) group; package: by uid)
   Follow      mobax watch [--json] [--min-ms N] [--moves]  the screen as it changes
                                        (pushed, not polled): new screens and +/~/-
                                        rows; --moves also sends frames mid-motion
@@ -101,6 +107,7 @@ Global options:
                      (default: $MOBILEAX_SERIAL / $ANDROID_SERIAL, the device
                      `mobax use` picked last, or the only one attached)
   --json             default output to JSON (or set HS_FORMAT=json)
+  --version, -V      print the version
 
 Low-level / debugging:
   mobax dev <sub>       ping | snapshot | screen | bench [-n N] [--json] | quit | state-daemon

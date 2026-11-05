@@ -4,7 +4,7 @@ The on-device daemon speaks a length-prefixed binary protocol: each
 frame is `uint32 big-endian length` + payload (in both directions).
 Commands are ASCII text, `verb [k=v …]` style. This document lists
 every wire verb the daemon dispatches in
-`src/dev/mobileax/daemon/Server.java`.
+`daemon/core/src/main/kotlin/dev/mobileax/daemon/Server.kt` (and `Dispatch.kt`).
 
 Use these directly via `mobax do <wire>` or `mobax shell` (one socket, many
 commands). `ERR:<msg>` is returned on failure.
@@ -13,6 +13,7 @@ commands). `ERR:<msg>` is returned on failure.
 
 ```
 ping                                                  → pong
+ready                                                 → ready (once UiAutomation is connected; `use --instr` waits on it)
 info                                                  → "<srcW> <srcH>"
 quit                                                  → bye   (daemon exits)
 ```
@@ -23,6 +24,12 @@ quit                                                  → bye   (daemon exits)
 dump             [display=N]                          full JSON dump, every window (another display: SDK 30+)
 dump_active                                           active window only
 ```
+
+A node's `bounds` are the part of it that shows: cut to its window and to
+every scrolling ancestor, so a half-hidden row's centre is on screen. A node
+nothing of which shows keeps the framework's bounds (often cut at one edge,
+even inverted) and has `off`: `below`, `above`, `left` or `right`. A Compose
+node with no resource id but a `testTag` reports the tag as `rid`.
 
 ## Capture — screenshots and streams
 
@@ -59,6 +66,12 @@ up          x=NUM y=NUM                                  releases the down point
 scroll      x=NUM y=NUM dy=NUM                           wheel scroll at point
 key         NAME                                         e.g. BACK, HOME, ENTER
 key         code=N                                       raw KeyEvent code
+key         ACCEPT | DISMISS                             answer the dialog on screen (`go accept|dismiss`):
+                                                         a permission prompt's first allow/deny button,
+                                                         an alert's button1/button2, else (Compose,
+                                                         custom) the bottom row of a window smaller
+                                                         than the screen: right accepts, left dismisses
+key         HIDE_KEYBOARD                                back, only while the soft keyboard is up
                                                          key/scroll take wait=0: don't wait for the
                                                          window to handle it or for animations to
                                                          end (a live viewer; Back in Recents took 5 s)
@@ -126,8 +139,9 @@ state_watch                                            chunked JSON frames
 
 ## Node actions — AccessibilityNodeInfo
 
-`<selector>` uses the same CSS-like syntax as `mobax find`:
-`Tag[attr=val][attr~=sub]:flag`, comma = OR.
+`<selector>` is a by: query without the prefix (see By queries below),
+which also reads the older form: `id=com.app:id/x text="Sign in"`,
+`desc~=menu`, `class=EditText` or a bare `EditText`. Visible nodes only.
 
 ```
 node_click       <selector>
@@ -142,6 +156,60 @@ submit           [<selector>]                  ACTION_IME_ENTER on focused
                                                fires the field's IME action
                                                (Search / Go / Send / Done / …)
 ```
+
+## By queries — UiAutomator, live
+
+`by:` queries run UiAutomator's `By` (`ByEngine`) against the live tree,
+visible nodes only. Options come first; `q=` takes the rest of the line.
+The CLI and MCP route any target or selector starting `by:` here.
+
+```
+by_find q=by:QUERY                                  → {"nodes":[…]} (dump node fields)
+by_wait [timeout_ms=N] [gone=1] q=by:QUERY          → ok x= y= elapsed= | ERR:TIMEOUT
+by_tap [timeout_ms=N] [nth=N] [long=1] [new_window_ms=N] q=by:QUERY
+                                                    → ok x= y= [new_window=true|false]
+by_swipe dir=up|down|left|right [pct=0.8] [fling=1] [nth=N] q=by:QUERY
+                                                    → ok scroll|swipe|fling [end]
+by_pinch in|out [pct=0.8] [nth=N] q=by:QUERY        → ok pinch in|out
+by_drag to=X,Y [speed=N] [nth=N] q=by:QUERY         → ok drag X,Y -> X,Y
+```
+
+QUERY: space-separated terms, all of which hold. `text=V` (also `~=`
+contains, `^=`, `$=`, `=/re/i`) for text, desc, hint, res, class, pkg;
+`res=title` and `class=Button` match any package's. Flags `clickable`,
+`checked`, `!enabled`, …; `has(Q)` `child(Q)` `parent(Q)` `in(Q)`;
+`depth=N`; `window(pkg=… title~=… type=app|ime|system|overlay active
+focused display=N)`. A value with spaces goes in `"quotes"`. `dir` on
+`by_swipe` is the finger's: a scrollable element scrolls (the content moves
+the other way) and says `end` when nothing is left.
+
+## XPath queries — Appium's document, on the device (experimental)
+
+Not advertised in the README, usage or MCP instructions: kept for people
+bringing Appium locators, and may change or go.
+
+`xpath:` queries (`XPathEngine`) build the screen as Appium's UiAutomator2
+server shows it — elements named after the class under `hierarchy`, with
+`index package class text resource-id checkable checked clickable enabled
+focusable focused long-clickable password scrollable selected displayed
+content-desc bounds` (plus `hint`, `state-description`) — and evaluate the
+XPath there, so Appium Inspector's XPaths work. `bounds` are the visible
+ones; a node nothing of which shows has `off`. A Compose testTag is the
+`resource-id` when there is none. XPath 1.0 (Android's engine) plus
+`matches(s, re[, flags])`, `lower-case`, `upper-case`, `ends-with`. Class
+names that aren't XML names get `_` for the offending characters (`@class`
+is exact). The CLI and MCP route `xpath:` targets for find, wait and tap
+here; tap scrolls toward an `off` node as it does for any other.
+
+```
+xpath_find [scope=app|all] q=XPATH                       → {"nodes":[…],"ms":N,"build_ms":N}
+                                                           | {"value":"…"} (count(), string(), …)
+xpath_wait [scope=app|all] [timeout_ms=N] [gone=1] q=XPATH → ok x= y= elapsed= | ERR:TIMEOUT
+```
+
+`scope=app` (default): the app's windows, the one on top first; `all`:
+every window. `xpath_wait` rechecks on accessibility events and ignores
+nodes marked `off`.
 
 ## Packages
 
@@ -218,6 +286,7 @@ wm_rotation  N                                         force rotation
 ```
 dumpsys SERVICE [ARGS…]                                chunked stream
 logcat  [ARGS…]                                        chunked stream
+logcat_uid UID[,UID…] [ARGS…]                         logcat's lines of those uids (ARGS has `-v uid`; Android ≤10, no --uid)
 shell   ARGV…                                          chunked stream + `__exit__ N` trailer
 monitor                                                am-monitor lifecycle stream
 ```

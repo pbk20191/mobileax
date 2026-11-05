@@ -139,10 +139,15 @@ pub(crate) fn run_wait(
             json_out::Obj::new().n("slept_ms", ms as i64));
     }
     let timeout_ms = f.timeout_ms.unwrap_or(10_000);
-    if let Some(sels) = css_selector(spec) {
+    let by = spec.starts_with("by:") || spec.starts_with("xpath:");
+    if let Some(sels) = css_selector(spec).filter(|_| !by) {
         return run_wait_selector(conn, &reporter, spec, &sels, f, timeout_ms);
     }
-    let wire: String = if let Some(rest) = spec.strip_prefix("idle") {
+    let wire: String = if let Some(xp) = spec.strip_prefix("xpath:") {
+        format!("xpath_wait timeout_ms={timeout_ms} q={xp}")
+    } else if by {
+        format!("by_wait timeout_ms={timeout_ms} q={spec}")
+    } else if let Some(rest) = spec.strip_prefix("idle") {
         let rest = rest.trim();
         let idle_ms = if rest.is_empty() {
             200
@@ -209,6 +214,8 @@ pub(crate) fn run_wait_selector(
         let ctx = selector::MatchCtx::from_roots(json::app_roots(&dump).into_iter().rev().collect());
         let mut matches = selector::find_all_with(&ctx, sels);
         selector::apply_filters(&mut matches, f.require());
+        // One off screen hasn't shown up yet.
+        matches.retain(|n| selector::get_str(n, "off").is_none());
         if let Some(n) = matches.first() {
             let elapsed = start.elapsed().as_millis() as i64;
             let (l, t, r, b) = selector::bounds(n).unwrap_or((0, 0, 0, 0));
@@ -234,12 +241,23 @@ pub(crate) fn run_find(
     f: &flags::ActionFlags,
 ) -> io::Result<()> {
     let reporter = output::Reporter::new(f.out(out_fmt));
-    let selectors = match selector::Selector::parse(sel) {
-        Ok(s) => s,
-        Err(e) => return Err(reporter.fail("find",
-            errors::ErrInfo::new(errors::ErrCode::BadArg, e))),
+    // `by:` runs UiAutomator's By on the device, live, and `xpath:` an XPath
+    // over the screen there; anything else matches a dump here.
+    let xpath = sel.strip_prefix("xpath:");
+    let by = sel.starts_with("by:") || xpath.is_some();
+    let selectors = if by { Vec::new() } else {
+        match selector::Selector::parse(sel) {
+            Ok(s) => s,
+            Err(e) => return Err(reporter.fail("find",
+                errors::ErrInfo::new(errors::ErrCode::BadArg, e))),
+        }
     };
-    let body = conn.call(f.dump_wire())?;
+    let wire = match xpath {
+        Some(xp) => format!("xpath_find q={xp}"),
+        None if by => format!("by_find q={sel}"),
+        None => f.dump_wire().to_string(),
+    };
+    let body = conn.call(&wire)?;
     if let Some(e) = errors::parse_err(&body) {
         return Err(reporter.fail("find", e));
     }
@@ -247,9 +265,17 @@ pub(crate) fn run_find(
         .map_err(|e| io::Error::other(format!("dump not utf-8: {e}")))?;
     let json = json::parse(text)
         .map_err(|e| io::Error::other(format!("dump not json: {e}")))?;
-    // App windows, topmost first — the order `mobax tap` prefers.
-    let ctx = selector::MatchCtx::from_roots(json::app_roots(&json).into_iter().rev().collect());
-    let mut matches = selector::find_all_with(&ctx, &selectors);
+    // count(…), string(…): an XPath that evaluates to a value.
+    if let Some(v) = json::obj_get(&json, "value").and_then(json::as_str) {
+        return reporter.ok("find", v, json_out::Obj::new().s("value", v));
+    }
+    let mut matches = if by {
+        json::obj_get(&json, "nodes").and_then(json::as_arr).map(|a| a.iter().collect()).unwrap_or_default()
+    } else {
+        // App windows, topmost first — the order `mobax tap` prefers.
+        let ctx = selector::MatchCtx::from_roots(json::app_roots(&json).into_iter().rev().collect());
+        selector::find_all_with(&ctx, &selectors)
+    };
     selector::apply_filters(&mut matches, f.require());
 
     if matches.is_empty() {
@@ -305,13 +331,15 @@ pub(crate) fn write_find_row(out: &mut impl Write, n: &json::Value) -> io::Resul
     let id  = selector::get_str(n, "rid").unwrap_or("");
     let t   = selector::get_str(n, "text").unwrap_or("");
     let d   = selector::get_str(n, "desc").unwrap_or("");
-    let bs  = match selector::bounds(n) {
-        Some((x1, y1, x2, y2)) => {
+    // Nothing of it shows: its bounds would be the framework's, cut at one edge.
+    let bs  = match (selector::get_str(n, "off"), selector::bounds(n)) {
+        (Some(off), _) => format!("[off-screen {off}]"),
+        (None, Some((x1, y1, x2, y2))) => {
             let cx = (x1 + x2) / 2;
             let cy = (y1 + y2) / 2;
             format!("[{x1},{y1}][{x2},{y2}] center=({cx},{cy})")
         }
-        None => "[]".into(),
+        (None, None) => "[]".into(),
     };
     write!(out, "{bs}\tclass={cls}\tid={id}\ttext={t:?}\tdesc={d:?}")?;
     for key in ["role", "state", "actions"] {
@@ -329,7 +357,7 @@ pub(crate) fn find_row_obj(n: &json::Value) -> json_out::Obj {
         .s("text",  selector::get_str(n, "text").unwrap_or(""))
         .s("desc",  selector::get_str(n, "desc").unwrap_or(""))
         .s("flags", selector::get_str(n, "flags").unwrap_or(""));
-    for key in ["role", "state", "error", "range", "collection", "item", "actions"] {
+    for key in ["off", "role", "state", "error", "range", "collection", "item", "actions"] {
         o = o.opt_s(key, selector::get_str(n, key));
     }
     if let Some((x1, y1, x2, y2)) = selector::bounds(n) {

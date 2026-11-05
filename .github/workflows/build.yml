@@ -1,0 +1,151 @@
+name: build
+
+# Every binary and MCP bundle of a PR, downloadable from the run's artifacts:
+# per platform `mobax` with both daemon builds (mobaxd.apk, mobax.jar), as an
+# archive and as an .mcpb. No viewer / TUI. Releases stay in release.yml.
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  # ─── Both daemon builds, shared across the CLI builds ───
+  build-daemon:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-36 build-tools;36.0.0'
+
+      # Signed with the key committed in daemon/instr (every build shares it).
+      - name: Build mobax.jar and mobaxd.apk
+        run: ./gradlew --quiet mobaxJar mobaxApk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: daemon
+          path: |
+            build/mobax.jar
+            build/mobaxd.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  build-cli:
+    needs: build-daemon
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: macos-arm64,     os: macos-15,       target: aarch64-apple-darwin,      exe: '',     archive: tar.gz, mcpb: darwin }
+          - { name: macos-x86_64,    os: macos-15,       target: x86_64-apple-darwin,       exe: '',     archive: tar.gz, mcpb: darwin }
+          - { name: linux-x86_64,    os: ubuntu-latest,  target: x86_64-unknown-linux-gnu,  exe: '',     archive: tar.gz, mcpb: linux, test: true }
+          - { name: linux-aarch64,   os: ubuntu-latest,  target: aarch64-unknown-linux-gnu, exe: '',     archive: tar.gz, mcpb: linux, cross: true }
+          - { name: windows-x86_64,  os: windows-latest, target: x86_64-pc-windows-msvc,    exe: '.exe', archive: zip,    mcpb: win32 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Static CRT (Windows only)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: echo "RUSTFLAGS=-C target-feature=+crt-static" >> "$GITHUB_ENV"
+
+      - name: Cache cargo registry + build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install aarch64 cross linker (Linux only)
+        if: matrix.cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+
+      # Cargo's version plus the run: VERSION, the .mcpb and `mobax --version` agree.
+      - name: Version
+        id: ver
+        shell: bash
+        run: |
+          v="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)-ci.${{ github.run_number }}"
+          echo "tag=v$v" >> "$GITHUB_OUTPUT"
+          echo "MOBAX_VERSION=$v" >> "$GITHUB_ENV"
+
+      - name: Test mobax
+        if: matrix.test
+        run: cargo test --locked -p mobax -p mobax-core
+
+      - name: Build mobax
+        shell: bash
+        run: cargo build --release --locked -p mobax --target ${{ matrix.target }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: daemon
+          path: build
+
+      - name: Stage and pack archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="dist/mobileax"
+          mkdir -p "$stage"
+          cp "target/${{ matrix.target }}/release/mobax${{ matrix.exe }}" "$stage/"
+          cp build/mobax.jar build/mobaxd.apk "$stage/"
+          [[ -f LICENSE ]] && cp LICENSE "$stage/" || true
+          cp README.md "$stage/"
+          echo "${{ steps.ver.outputs.tag }}" > "$stage/VERSION"
+          asset="mobileax-${{ matrix.name }}.${{ matrix.archive }}"
+          if [[ "${{ matrix.archive }}" == "zip" ]]; then
+            powershell -NoProfile -Command "Compress-Archive -Path 'dist/mobileax' -DestinationPath '$asset'"
+          else
+            tar -C dist -czf "$asset" mobileax
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Pack MCP bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/mcpb-stage.mjs --version "${{ steps.ver.outputs.tag }}" \
+            --platform "${{ matrix.mcpb }}" \
+            --cli "target/${{ matrix.target }}/release/mobax${{ matrix.exe }}" \
+            --jar build/mobax.jar --apk build/mobaxd.apk \
+            --out dist/mcpb
+          npx -y @anthropic-ai/mcpb@2.1.2 validate dist/mcpb/manifest.json
+          npx -y @anthropic-ai/mcpb@2.1.2 pack dist/mcpb "mobileax-${{ matrix.name }}.mcpb"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mobileax-${{ matrix.name }}
+          path: |
+            mobileax-${{ matrix.name }}.${{ matrix.archive }}
+            mobileax-${{ matrix.name }}.mcpb
+          if-no-files-found: error
+          retention-days: 14

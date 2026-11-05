@@ -14,7 +14,35 @@ mobax <verb> ──► adb server ─────►     MobaxServer → Dispatc
 ```
 
 The daemon runs as the shell UID via `app_process` with hidden-API
-restrictions lifted. It listens on the abstract Unix socket `@mobaxd_<port>`
+restrictions lifted.
+
+There is a second build of the same daemon, and `mobax use` prefers it where
+`mobaxd.apk` sits next to the jar and the device runs Android 10+: an
+installed APK (`dev.mobileax.daemon`) run as an instrumentation. If it can't
+be installed (no "Install via USB") or doesn't start, `use` falls back to the
+jar; `use --instr|--jar` (or `MOBAX_DAEMON=instr|jar`) picks one. `use`
+installs it when the device's copy isn't this build and starts `am instrument -w --no-hidden-api-checks …
+/.MobaxInstrumentation`. UiAutomation comes from the framework (shared with
+UiAutomator's `UiDevice`), shell permissions are adopted
+(`adoptShellPermissionIdentity`), and what needs the shell uid itself
+(dumpsys, settings, logcat, `cp`) runs through a framework-started `sh`. It
+exits when its `am instrument` process goes. Three Gradle modules:
+`daemon/core` is the daemon (a library), `daemon/shell` the app_process
+entry point and context setup (`build/mobax.jar`), `daemon/instr` the
+instrumentation's (`build/mobaxd.apk`). Each entry point sets
+`Host.current` (its Context, calling package, startup log and shell) and
+calls `serve()`. The shell is where they differ most: the jar spawns
+`sh -c` as its own child, the APK goes through UiAutomation.
+
+On a physical device either build leaves once no client has been connected
+for 30 s (`Lease`), so unplugging the cable or quitting the host frees the
+device's UiAutomation for other tools. Connections that stay open hold it:
+the state watcher `use` spawns, the MCP server's pooled sessions, a mirror.
+The next `use`, or any verb that finds no daemon, starts it again. An
+emulator keeps its daemon until `drop`. `use --idle-exit S` (or
+`MOBAX_IDLE_EXIT=S`) overrides either default; 0 keeps it up.
+
+Either build listens on the abstract Unix socket `@mobaxd_<port>`
 (the host opens it through the adb server: `host:transport:SERIAL`, then
 `localabstract:mobaxd_<port>`, with no host port forward) and refuses
 any peer whose `SO_PEERCRED` uid isn't shell or root. The host runs a
@@ -58,8 +86,9 @@ every verb so two daemon builds can be compared on a device.
 ## Layout
 
 ```
-src/dev/mobileax/daemon/      on-device daemon (Kotlin → dex → jar)
+daemon/core/                  on-device daemon (Kotlin library)
+daemon/shell/, daemon/instr/  its app_process and am-instrument entry points
 mobax-cli/                 host CLI — short-verb surface (`mobax use`, `mobax see`, …)
 mobax-viewer/              GUI mirror — winit + GPU decode (Metal/VideoToolbox, D3D11/MF, GLES/VA-API)
-build.gradle.kts              AGP: kotlinc → R8 → unsigned APK → build/mobax.jar  (build.sh wraps it)
+build.gradle.kts              AGP: kotlinc → R8 → build/mobax.jar, build/mobaxd.apk  (build.sh wraps it)
 ```

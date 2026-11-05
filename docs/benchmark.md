@@ -91,6 +91,7 @@ a check). No LLM runs, so it is free and repeatable. Spec:
   tap's reply differs between sessions. Compare s1 across sessions with care.
 
 ```
+./gradlew benchToastApk        # s6's app → build/bench-toast.apk; run from the repo root
 ANDROID_HOME=… python -I scripts/agent-bench.py --runs 3 --compare bench/agent/baseline.json
 ```
 
@@ -116,7 +117,12 @@ within ±5% on the total (+3.6%, +2.7%) with identical calls:
 | s3 | Settings search "배터리" → result | typing, result check |
 | s4 | Fresh camera: location-tag prompt, location permission (no `wait`: a missed tap looks again while the screen moves) | popups (later: auto-handling) |
 | s5 | Recents (two fixed cards), one `ui` | output size of a full-screen system UI |
-| s6 | About phone → tap Build number; the check is the reply carrying `toast:` | a result shown only as a toast |
+| s6 | The bench app (`bench/toast-app`) → tap its one button; the check is the reply carrying `toast:` | a result shown only as a toast |
+
+s6 used Settings' Build number until the instrumentation daemon became the
+default: it runs the device as a monkey, and Settings ignores Build number
+taps then. Its tokens (about 100 now, 338–648 before) don't compare with
+older runs.
 
 Findings from writing the scenarios:
 

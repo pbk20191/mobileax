@@ -51,7 +51,9 @@ to connect and start the on-device daemon.\n\
 `ui` lists the screen as rows numbered @1, @2, …: verb (tap / fill / - for text), \
 class, label, #resource-id, centre x,y and state. Act on a row by its ref \
 (tap target \"@3\", fill selector \"@5\"), or by text, #resource_id or a CSS-like \
-selector ('Button[text=\"OK\"]').\n\
+selector ('Button[text=\"OK\"]'). `by:` targets match live on the device \
+(UiAutomator By): text= desc= res= class= pkg= (~= contains, ^= $= =/re/i), \
+clickable !enabled, has() in() window(pkg= type=ime).\n\
 \n\
 `tap`, `fill`, `type`, `swipe`, `go` and `open` wait for the screen to settle and \
 reply with what changed: + added, ~ changed and - removed rows, or the whole new \
@@ -64,16 +66,12 @@ connected). `observe: false` skips an action's settle and reply. \
 `open`, `swipe` and x,y `tap` at another display; there, tap by the x,y \
 `ui` lists.\n\
 \n\
-When you already know several steps (tap a field, fill it, press enter, wait for \
-the result), send them as one `batch`: one call instead of one per step.\n\
+Steps you already know (tap a field, fill it, press enter): send one `batch`.\n\
 \n\
-To wait for the screen, use `watch` (any change, or `until` some text shows) or \
-`wait` (a selector) instead of calling `ui` repeatedly; the device pushes \
-changes, so waiting is free. Use `screenshot` only when the rows don't tell \
-you enough (an image costs far more). \
-An error starts with ERR:CODE and says what to do next. If `use` finds no device, \
-an emulator can be started on the host with `android emulator start NAME` (give \
-the AVD hw.gpu.mode=host).";
+To wait, use `watch` (any change, or `until` some text shows) or `wait` (a \
+selector), not repeated `ui`: the device pushes changes. Use `screenshot` only \
+when the rows don't tell you enough (an image costs far more). \
+An error starts with ERR:CODE and says what to do next.";
 
 /// `mobax mcp [GLOBAL OPTIONS]`: serves until stdin closes. The options
 /// (e.g. `--device SERIAL`, `--port N`) apply to every tool call.
@@ -203,7 +201,7 @@ fn initialize(params: Option<&Value>) -> String {
     encode_str(&mut instructions, INSTRUCTIONS);
     format!(
         r#"{{"protocolVersion":"{version}","capabilities":{{"tools":{{}}}},"serverInfo":{{"name":"mobileax","version":"{}"}},"instructions":{instructions}}}"#,
-        env!("CARGO_PKG_VERSION")
+        crate::VERSION
     )
 }
 
@@ -327,7 +325,7 @@ impl Engine {
         if crate::daemon::ping_daemon(&t.serial, t.port).is_ok() {
             return Ok(());
         }
-        crate::daemon::connect(&crate::daemon::ConnectOpts { serial: Some(t.serial.clone()), port: Some(t.port) })?;
+        crate::daemon::connect(&crate::daemon::ConnectOpts { serial: Some(t.serial.clone()), port: Some(t.port), instr: crate::daemon::instr_default(), idle_exit: crate::daemon::idle_exit_default() })?;
         lock(&self.screens).remove(t);
         lock(&self.pool).remove(t);
         Ok(())
@@ -956,7 +954,7 @@ fn build_tools() -> Vec<Tool> {
         },
         Tool {
             name: "screenshot",
-            description: "The screen as a JPEG (768 px long edge by default), or with `target` (@N, text, selector) just that element, from full resolution.",
+            description: "The screen as a JPEG (768 px long edge by default), or with `target` just that element, from full resolution.",
             schema: obj(&[r#""target":{"type":"string"}"#, r#""size":{"type":"integer","description":"long edge px"}"#, r#""native":{"type":"boolean"}"#, DEVICE], &[]),
         },
         Tool {
@@ -966,7 +964,7 @@ fn build_tools() -> Vec<Tool> {
         },
         Tool {
             name: "tap",
-            description: "Tap a target (@N, text, #resource_id, selector) or x,y.",
+            description: "Tap a target (@N, text, #id, selector) or x,y.",
             schema: obj(&[r#""target":{"type":"string"}"#, SCROLL, r#""x":{"type":"integer"}"#, r#""y":{"type":"integer"}"#, DISPLAY, TIMEOUT, OBSERVE, DEVICE], &[]),
         },
         Tool {
@@ -976,17 +974,17 @@ fn build_tools() -> Vec<Tool> {
         },
         Tool {
             name: "fill",
-            description: "Set an edit field's text in one step. selector: @N, #resource_id, selector, or the field's label.",
+            description: "Set a field's text in one step. selector: @N, #resource_id, selector, or its label.",
             schema: obj(&[r#""selector":{"type":"string"}"#, r#""text":{"type":"string"}"#, OBSERVE, DEVICE], &["selector", "text"]),
         },
         Tool {
             name: "swipe",
-            description: "Swipe the finger this way (up scrolls content down), or pinch two fingers `out` (zoom in) or `in` around x,y (default: centre).",
-            schema: obj(&[r#""direction":{"type":"string","enum":["up","down","left","right"]}"#, r#""pinch":{"type":"string","enum":["in","out"]}"#, r#""x":{"type":"integer"}"#, r#""y":{"type":"integer"}"#, r#""duration_ms":{"type":"integer"}"#, DISPLAY, OBSERVE, DEVICE], &[]),
+            description: "Swipe the finger this way (up scrolls content down), or pinch `out` (zoom in) / `in` around x,y (default: centre). A by: `target`: swipe inside it (lists say `end`), `fling`, `drag_to` \"x,y\".",
+            schema: obj(&[r#""direction":{"type":"string","enum":["up","down","left","right"]}"#, r#""pinch":{"type":"string","enum":["in","out"]}"#, r#""x":{"type":"integer"}"#, r#""y":{"type":"integer"}"#, r#""duration_ms":{"type":"integer"}"#, r#""target":{"type":"string"}"#, r#""fling":{"type":"boolean"}"#, r#""drag_to":{"type":"string"}"#, DISPLAY, OBSERVE, DEVICE], &[]),
         },
         Tool {
             name: "go",
-            description: "Press a key: back, home, recents, enter, menu, …",
+            description: "Key: back, home, recents, enter…, accept / dismiss (dialog), hide_keyboard.",
             schema: obj(&[r#""key":{"type":"string"}"#, OBSERVE, DEVICE], &["key"]),
         },
         Tool {
@@ -1004,7 +1002,7 @@ fn build_tools() -> Vec<Tool> {
         },
         Tool {
             name: "watch",
-            description: "Wait until the screen differs from what you last saw (or `until` a row shows this text, case-insensitive), then reply with what changed.",
+            description: "Wait until the screen changes from what you last saw (or `until` a row shows this text), then reply with what changed.",
             schema: obj(&[r#""until":{"type":"string"}"#, TIMEOUT, DEVICE], &[]),
         },
         Tool {
@@ -1019,8 +1017,9 @@ fn build_tools() -> Vec<Tool> {
         },
         Tool {
             name: "logcat",
-            description: "Recent logcat lines, newest last. level: minimum priority; tags: TAG or TAG:LEVEL; grep: regexes, one must match; exclude: drop lines containing; since: 90, 30s, 5m, 2h; format: logcat -v (threadtime); lines: default 100; crash: crash buffer; clear: clear instead of read.",
+            description: "Recent logcat lines, newest last. query: Android Studio Logcat filter (package:mine -tag:X level:WARN message~:re is:crash age:5m). exclude: drop lines containing; lines: default 100; crash: crash buffer; clear: clear instead of read.",
             schema: obj(&[
+                r#""query":{"type":"string"}"#,
                 r#""package":{"type":"string"}"#,
                 r#""pid":{"type":"integer"}"#,
                 r#""level":{"type":"string","enum":["V","D","I","W","E","F"]}"#,
@@ -1163,6 +1162,10 @@ fn call_tool(name: &str, args: &Value, engine: &Engine, device: Option<&str>, br
                         }
                         match find_bounds(&text) {
                             Some(b) if ok => Some(b),
+                            _ if ok && text.starts_with("[off-screen") => return Ok(Out::Text((false, format!(
+                                "ERR:NOT_FOUND:{} — scroll it into view first (swipe, or tap/find with scroll)",
+                                text.lines().next().unwrap_or("").split('\t').next().unwrap_or("")
+                            )))),
                             _ => return Ok(Out::Text((false, text))),
                         }
                     }
@@ -1223,6 +1226,20 @@ fn call_tool(name: &str, args: &Value, engine: &Engine, device: Option<&str>, br
             argv.extend(["fill".into(), sel, need("text")?]);
             Via::Act
         }
+        "swipe" if s("target").is_some() => {
+            let t = need("target")?;
+            if !t.starts_with("by:") {
+                return Err((-32602, "swipe: an element target is a by: query".into()));
+            }
+            let wire = match (s("drag_to"), s("pinch"), s("direction")) {
+                (Some(to), _, _) => format!("by_drag to={} q={t}", to.replace(' ', "")),
+                (None, Some(p), _) => format!("by_pinch {p} q={t}"),
+                (None, None, Some(d)) => format!("by_swipe dir={d}{} q={t}", if b("fling") { " fling=1" } else { "" }),
+                _ => return Err((-32602, "swipe: with a target give \"direction\", \"pinch\" or \"drag_to\"".into())),
+            };
+            argv.extend(["do".into(), wire]);
+            Via::Act
+        }
         "swipe" => {
             let display = n("display").filter(|d| *d != 0);
             match (s("pinch"), s("direction")) {
@@ -1275,6 +1292,9 @@ fn call_tool(name: &str, args: &Value, engine: &Engine, device: Option<&str>, br
         }
         "logcat" => {
             argv.push("logs".into());
+            if let Some(q) = s("query").filter(|q| !q.trim().is_empty()) {
+                argv.push(q);
+            }
             if let Some(p) = s("package") {
                 argv.extend(["--pkg".into(), p]);
             }

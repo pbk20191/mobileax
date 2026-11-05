@@ -67,10 +67,12 @@ pub(crate) enum Cmd {
     Tui { active: bool },
 }
 
-/// `mobax logs`: logcat with filters. Default `logcat -d -t 100` (last 100
-/// lines, exit); `--follow` streams instead.
+/// `mobax logs [QUERY…]`: logcat with filters. Default `logcat -d -t 100`
+/// (last 100 lines, exit); `--follow` streams instead.
+///   QUERY               Android Studio's Logcat query (device/logquery.rs):
+///                       package:mine tag:OkHttp -tag:chatty level:WARN …
 ///   --tail N            lines to print (default 100)
-///   --pkg PKG           only PKG's running process (logcat --pid)
+///   --pkg PKG           only PKG's entries, by uid (= package=:PKG)
 ///   --level V|D|I|W|E|F minimum priority
 ///   --tag TAG[:L]       only these tags (repeatable); others are silenced
 ///   --grep REGEX        lines matching REGEX (logcat -e; no spaces)
@@ -87,6 +89,7 @@ pub(crate) fn parse_logs(rest: &[&str]) -> Result<Cmd, String> {
     let mut raw: Vec<String> = Vec::new();
     let mut q = adb::LogcatQuery::default();
     let mut clear = false;
+    let mut query: Vec<&str> = Vec::new();
     let mut i = 0;
     // The daemon splits logcat's argv on whitespace.
     let no_space = |flag: &str, v: &str| -> Result<String, String> {
@@ -163,12 +166,30 @@ pub(crate) fn parse_logs(rest: &[&str]) -> Result<Cmd, String> {
                 }
                 break;
             }
+            other if !other.starts_with('-') || is_negated_term(other) => query.push(other),
             other => return Err(format!("unknown logs arg: {other}")),
         }
         i += 1;
     }
     if pkg.is_some() && pid.is_some() {
         return Err("--pkg and --pid are exclusive".into());
+    }
+    // The shell took the quotes off `message:"timed out"`: put them back,
+    // or the query would read two terms.
+    let mut studio = query.iter().map(|a| requote(a)).collect::<Vec<_>>().join(" ");
+    if let Some(p) = &pkg {
+        studio = if studio.is_empty() { format!("package=:{p}") } else { format!("package=:{p} & ({studio})") };
+    }
+    let studio = (!studio.is_empty()).then_some(studio);
+    if let Some(s) = &studio {
+        if !formats.is_empty() {
+            return Err("--format can't be combined with --pkg or a query (they read logcat's uid column)".into());
+        }
+        let parsed = crate::device::logquery::parse(s)?;
+        if let Some(age) = parsed.age_secs {
+            q.since_secs = Some(q.since_secs.map_or(age, |s| s.max(age)));
+        }
+        formats.extend(["threadtime".to_string(), "uid".to_string()]);
     }
     let mut args: Vec<String> = Vec::new();
     for b in &buffers {
@@ -188,7 +209,7 @@ pub(crate) fn parse_logs(rest: &[&str]) -> Result<Cmd, String> {
     // logcat's -t counts before its priority / tag / regex filters (and
     // before --exclude), so with any of those only the host's tail applies.
     let filtered = level.is_some() || !tags.is_empty() || !greps.is_empty()
-        || !q.exclude.is_empty() || !raw.is_empty();
+        || !q.exclude.is_empty() || !raw.is_empty() || studio.is_some();
     if !follow {
         args.push("-d".into());
         if !filtered && q.since_secs.is_none() {
@@ -211,8 +232,31 @@ pub(crate) fn parse_logs(rest: &[&str]) -> Result<Cmd, String> {
         args.push(format!("*:{l}"));
     }
     q.args = args;
-    q.pkg = pkg;
+    q.studio = studio;
     Ok(Cmd::Adb(adb::Cmd::Logcat(q)))
+}
+
+/// One query word as typed before the shell split it: a value with spaces
+/// in quotes again (`message:timed out` → `message:"timed out"`).
+fn requote(arg: &str) -> String {
+    if !arg.contains(char::is_whitespace) || arg.contains('"') {
+        return arg.to_string();
+    }
+    let neg = usize::from(arg.starts_with('-'));
+    let key = arg[neg..].chars().take_while(char::is_ascii_alphabetic).count();
+    let after = &arg[neg + key..];
+    let op = ["~:", "=:", ":"].into_iter().find(|o| after.starts_with(o)).filter(|_| key > 0);
+    match op {
+        Some(o) => format!("{}\"{}\"", &arg[..neg + key + o.len()], &after[o.len()..]),
+        None => format!("\"{arg}\""),
+    }
+}
+
+/// `-tag:x`, `-package~:y`: a negated query term, not a flag.
+fn is_negated_term(arg: &str) -> bool {
+    let key: String = arg[1..].chars().take_while(char::is_ascii_alphabetic).collect();
+    let after = &arg[1 + key.len()..];
+    !key.is_empty() && (after.starts_with(':') || after.starts_with("~:") || after.starts_with("=:"))
 }
 
 /// logcat's `-v` formats and format modifiers.
@@ -311,7 +355,7 @@ pub(crate) enum UiFormat { Human, Interactive, Json, Xml }
 pub(crate) enum UiWindows { App, Active, All }
 
 pub(crate) fn parse_use(rest: &[&str]) -> Result<daemon::ConnectOpts, String> {
-    let mut opts = daemon::ConnectOpts { serial: None, port: None };
+    let mut opts = daemon::ConnectOpts { serial: None, port: None, instr: daemon::instr_default(), idle_exit: daemon::idle_exit_default() };
     let mut i = 0;
     while i < rest.len() {
         match rest[i] {
@@ -323,6 +367,13 @@ pub(crate) fn parse_use(rest: &[&str]) -> Result<daemon::ConnectOpts, String> {
                 i += 1;
                 opts.port = Some(rest.get(i).ok_or("--port needs a value")?
                     .parse().map_err(|_| "invalid --port".to_string())?);
+            }
+            "--instr" => opts.instr = Some(true),
+            "--jar" => opts.instr = Some(false),
+            "--idle-exit" => {
+                i += 1;
+                opts.idle_exit = Some(rest.get(i).ok_or("--idle-exit needs SECONDS")?
+                    .parse().map_err(|_| "invalid --idle-exit".to_string())?);
             }
             serial if !serial.starts_with('-') && opts.serial.is_none() => {
                 opts.serial = Some(serial.to_string());
@@ -343,7 +394,7 @@ pub(crate) fn parse_drop(rest: &[&str]) -> Result<daemon::DisconnectOpts, String
                 i += 1;
                 opts.serial = Some(rest.get(i).ok_or("--device needs a SERIAL")?.to_string());
             }
-            "--keep-jar" => opts.keep_jar = true,
+            "--keep-jar" | "--keep-apk" => opts.keep_jar = true,
             other => return Err(format!("unknown disconnect arg: {other}")),
         }
         i += 1;
@@ -561,6 +612,10 @@ pub(crate) fn parse_args(args: &[String]) -> Result<Opts, String> {
                 crate::outln!("{USAGE}");
                 std::process::exit(0);
             }
+            "-V" | "--version" => {
+                crate::outln!("mobax {}", crate::VERSION);
+                std::process::exit(0);
+            }
             // Everything after `--` belongs to the verb (`mobax logs -- -s TAG`).
             "--" => {
                 positional.extend(args[i..].iter().map(String::as_str));
@@ -725,7 +780,7 @@ pub(crate) fn parse_args(args: &[String]) -> Result<Opts, String> {
             }
         }
         Some((&"go", rest)) => {
-            let k = rest.first().ok_or("go needs KEY (back|home|recents|enter|…)")?;
+            let k = rest.first().ok_or("go needs KEY (back|home|recents|enter|…|accept|dismiss|hide_keyboard)")?;
             Cmd::Input(format!("key {}", k.to_uppercase()))
         }
         Some((&"swipe", rest)) => {
@@ -1043,7 +1098,21 @@ mod parse_logs_tests {
         let f = q(&["--follow", "--exclude", "chatty"]);
         assert_eq!((f.args.len(), f.tail, f.exclude.as_slice()), (0, None, &["chatty".to_string()][..]));
         let p = q(&["--pkg", "com.android.settings"]);
-        assert_eq!((p.pkg.as_deref(), p.args.as_slice()), (Some("com.android.settings"), &["-d", "-t", "100"].map(String::from)[..]));
+        assert_eq!((p.studio.as_deref(), p.args.as_slice()),
+            (Some("package=:com.android.settings"), &["-v", "threadtime", "-v", "uid", "-d"].map(String::from)[..]));
+    }
+
+    #[test]
+    fn studio_queries() {
+        let s = q(&["package:mine", "-tag:chatty", "level:WARN", "age:5m"]);
+        assert_eq!((s.studio.as_deref(), s.since_secs, s.tail), (Some("package:mine -tag:chatty level:WARN age:5m"), Some(300), Some(100)));
+        assert_eq!(s.args, ["-v", "threadtime", "-v", "uid", "-d"]);
+        assert_eq!(q(&["--pkg", "a.b", "tag:X", "|", "tag:Y"]).studio.as_deref(), Some("package=:a.b & (tag:X | tag:Y)"));
+        // The shell's quotes are gone by now.
+        assert_eq!(q(&["message:timed out", "-tag~:a b"]).studio.as_deref(), Some("message:\"timed out\" -tag~:\"a b\""));
+        assert!(parse_logs(&["-v", "brief", "tag:X"]).is_err());
+        assert!(parse_logs(&["level:LOUD"]).is_err());
+        assert!(parse_logs(&["-zap"]).is_err());
     }
 
     #[test]

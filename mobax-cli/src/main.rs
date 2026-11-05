@@ -9,6 +9,13 @@ use std::io::{self, Write};
 use std::process::ExitCode;
 
 mod cli;
+
+/// This build's version: what CI or a release stamps through MOBAX_VERSION
+/// at build time (`0.5.2-ci.12`, a tag's `0.6.0`), else Cargo's.
+pub(crate) const VERSION: &str = match option_env!("MOBAX_VERSION") {
+    Some(v) => v,
+    None => env!("CARGO_PKG_VERSION"),
+};
 mod cmd;
 mod device;
 mod mcp;
@@ -499,6 +506,8 @@ fn print_devices() -> io::Result<()> {
         let opts = daemon::ConnectOpts {
             serial: Some(rows[0].serial.clone()),
             port: None,
+            instr: daemon::instr_default(),
+            idle_exit: daemon::idle_exit_default(),
         };
         if let Ok((serial, _)) = daemon::connect(&opts) {
             crate::errln!("daemon up on {serial} (auto)");
@@ -528,7 +537,7 @@ fn print_devices() -> io::Result<()> {
 /// verbs work without an explicit `mobax use` first. Returns a short human
 /// reason on the error path.
 fn try_auto_use(serial: &str, port: u16) -> Result<(), String> {
-    let opts = daemon::ConnectOpts { serial: Some(serial.to_string()), port: Some(port) };
+    let opts = daemon::ConnectOpts { serial: Some(serial.to_string()), port: Some(port), instr: daemon::instr_default(), idle_exit: daemon::idle_exit_default() };
     let (serial, _) = daemon::connect(&opts).map_err(|e| format!("starting the daemon failed: {e}"))?;
     crate::errln!("daemon up on {serial} (auto)");
     Ok(())
