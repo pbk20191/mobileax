@@ -78,3 +78,11 @@
   letters at the ends of a class range like `[a-z]` stay as written.
   `--exclude` is plain text, matched on the host.
 - `mobax logs --since 5m` reads the device's clock, not the host's.
+- `mobax logs QUERY` takes Android Studio's Logcat filter (`package:mine
+  level:WARN -tag:chatty`, `~:` regex, `=:` exact, `|` `&` `( )`) and matches
+  it on the host over `logcat -v threadtime -v uid`. `package:` (and `--pkg`)
+  goes by the entry's uid, so it covers an app's earlier, dead processes and
+  follows it across restarts; `package:mine` is the app in front when the
+  command starts. Quote the query as one argument when it has spaces inside a
+  value: `'message:"timed out"'`. `is:crash` is `AndroidRuntime` errors and
+  native crash lines; `age:` is the same as `--since`.

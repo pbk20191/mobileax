@@ -1017,8 +1017,9 @@ fn build_tools() -> Vec<Tool> {
         },
         Tool {
             name: "logcat",
-            description: "Recent logcat lines, newest last. level: minimum priority; tags: TAG or TAG:LEVEL; grep: regexes, one must match; exclude: drop lines containing; since: 90, 30s, 5m, 2h; format: logcat -v (threadtime); lines: default 100; crash: crash buffer; clear: clear instead of read.",
+            description: "Recent logcat lines, newest last. query: Android Studio Logcat filter (package:mine -tag:X level:WARN message~:re is:crash age:5m). exclude: drop lines containing; lines: default 100; crash: crash buffer; clear: clear instead of read.",
             schema: obj(&[
+                r#""query":{"type":"string"}"#,
                 r#""package":{"type":"string"}"#,
                 r#""pid":{"type":"integer"}"#,
                 r#""level":{"type":"string","enum":["V","D","I","W","E","F"]}"#,
@@ -1291,6 +1292,9 @@ fn call_tool(name: &str, args: &Value, engine: &Engine, device: Option<&str>, br
         }
         "logcat" => {
             argv.push("logs".into());
+            if let Some(q) = s("query").filter(|q| !q.trim().is_empty()) {
+                argv.push(q);
+            }
             if let Some(p) = s("package") {
                 argv.extend(["--pkg".into(), p]);
             }

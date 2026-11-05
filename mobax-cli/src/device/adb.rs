@@ -11,6 +11,7 @@ use std::fs::File;
 use std::io::{self, Write};
 
 use crate::{state_cache, Conn};
+use crate::device::logquery;
 use crate::Connect;
 
 #[derive(Debug)]
@@ -38,8 +39,9 @@ pub(crate) enum Cmd {
 pub(crate) struct LogcatQuery {
     /// logcat argv (buffers, -d / -t, -v, -e, filter specs, raw extras).
     pub args: Vec<String>,
-    /// Becomes `--pid=` for the package's main process, resolved on the device.
-    pub pkg: Option<String>,
+    /// An Android Studio Logcat query, matched on the host (logquery.rs);
+    /// `args` then asks for `-v threadtime -v uid`.
+    pub studio: Option<String>,
     /// Becomes `-T <epoch>`: this many seconds back on the device's clock.
     pub since_secs: Option<u64>,
     /// Keep the last N lines on the host. logcat's own `-t` counts lines
@@ -62,6 +64,42 @@ impl LogcatQuery {
             !self.exclude.iter().any(|x| line.contains(x.as_str()))
         }
     }
+}
+
+/// What `mobax logs` prints of each line: logcat's as is, or, under a
+/// Studio query, the matching entries as plain `threadtime`.
+struct Lines<'a> {
+    q: &'a LogcatQuery,
+    studio: Option<(logquery::Query, logquery::Device)>,
+}
+
+impl Lines<'_> {
+    fn render(&self, line: &str) -> Option<String> {
+        if !self.q.keeps(line) {
+            return None;
+        }
+        let Some((query, dev)) = &self.studio else { return Some(line.to_string()) };
+        let e = logquery::parse_entry(line)?;
+        query.matches(&e, dev).then_some(e.plain)
+    }
+}
+
+/// Reads what a Studio query needs before logcat starts: which packages own
+/// which uid, the running processes, and (for `package:mine`) the app in front.
+fn studio_context(conn: &mut Conn, src: &str) -> io::Result<(logquery::Query, logquery::Device)> {
+    let query = logquery::parse(src).map_err(io::Error::other)?;
+    let mut dev = logquery::Device::default();
+    dev.read_packages(&shell_capture(conn, "shell pm list packages -U")?);
+    dev.read_processes(&shell_capture(conn, "shell ps -A -o PID,NAME")?);
+    if query.uses_mine {
+        let top = conn.call("state top")?;
+        let top = String::from_utf8_lossy(&top);
+        dev.mine = top.split('/').next().map(str::trim).filter(|p| !p.is_empty() && !p.starts_with("ERR")).map(String::from);
+        if dev.mine.is_none() {
+            return Err(io::Error::other("package:mine: no app in front"));
+        }
+    }
+    Ok((query, dev))
 }
 
 // ---------- parsers ----------
@@ -219,14 +257,7 @@ fn parse_exit_trailer(b: &[u8]) -> Option<i32> {
 /// an error.
 fn run_logcat(conn: &mut Conn, q: &LogcatQuery) -> io::Result<()> {
     let mut wire = String::from("logcat");
-    if let Some(pkg) = &q.pkg {
-        let pids = shell_capture(conn, &format!("shell pidof {pkg}"))
-            .map_err(|_| io::Error::other(format!("{pkg} is not running")))?;
-        // pidof lists every process of the package; the main one is first.
-        let pid = pids.split_whitespace().next()
-            .ok_or_else(|| io::Error::other(format!("{pkg} is not running")))?;
-        wire.push_str(&format!(" --pid={pid}"));
-    }
+    let lines = Lines { q, studio: q.studio.as_deref().map(|s| studio_context(conn, s)).transpose()? };
     if let Some(secs) = q.since_secs {
         // The device's clock, not the host's: emulators and phones drift.
         let now: u64 = shell_capture(conn, "shell date +%s")?.trim().parse()
@@ -236,32 +267,33 @@ fn run_logcat(conn: &mut Conn, q: &LogcatQuery) -> io::Result<()> {
     for a in &q.args { wire.push(' '); wire.push_str(a); }
     conn.send_cmd(&wire)?;
     let Some(n) = q.tail else {
-        let mut out = LineFilter { q, out: crate::output::stdout(), partial: Vec::new() };
+        let mut out = LineFilter { lines: &lines, out: crate::output::stdout(), partial: Vec::new() };
         conn.recv_chunks_to(&mut out)?;
         return out.finish();
     };
     let mut all = Vec::new();
     conn.recv_chunks_to(&mut all)?;
     let text = String::from_utf8_lossy(&all);
-    let lines: Vec<&str> = text.lines().filter(|l| q.keeps(l)).collect();
+    let kept: Vec<String> = text.lines().filter_map(|l| lines.render(l)).collect();
     let mut out = crate::output::stdout();
-    for l in &lines[lines.len().saturating_sub(n)..] {
+    for l in &kept[kept.len().saturating_sub(n)..] {
         writeln!(out, "{l}")?;
     }
     out.flush()
 }
 
-/// Passes whole lines that `LogcatQuery::keeps` through while streaming.
+/// Passes whole lines through [Lines::render] while streaming.
 struct LineFilter<'a, W: Write> {
-    q: &'a LogcatQuery,
+    lines: &'a Lines<'a>,
     out: W,
     partial: Vec<u8>,
 }
 
 impl<W: Write> LineFilter<'_, W> {
     fn emit(&mut self, line: &[u8]) -> io::Result<()> {
-        if self.q.keeps(String::from_utf8_lossy(line).trim_end()) {
-            self.out.write_all(line)?;
+        if let Some(l) = self.lines.render(String::from_utf8_lossy(line).trim_end()) {
+            self.out.write_all(l.as_bytes())?;
+            self.out.write_all(b"\n")?;
         }
         Ok(())
     }

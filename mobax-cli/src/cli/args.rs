@@ -67,10 +67,12 @@ pub(crate) enum Cmd {
     Tui { active: bool },
 }
 
-/// `mobax logs`: logcat with filters. Default `logcat -d -t 100` (last 100
-/// lines, exit); `--follow` streams instead.
+/// `mobax logs [QUERY…]`: logcat with filters. Default `logcat -d -t 100`
+/// (last 100 lines, exit); `--follow` streams instead.
+///   QUERY               Android Studio's Logcat query (device/logquery.rs):
+///                       package:mine tag:OkHttp -tag:chatty level:WARN …
 ///   --tail N            lines to print (default 100)
-///   --pkg PKG           only PKG's running process (logcat --pid)
+///   --pkg PKG           only PKG's entries, by uid (= package=:PKG)
 ///   --level V|D|I|W|E|F minimum priority
 ///   --tag TAG[:L]       only these tags (repeatable); others are silenced
 ///   --grep REGEX        lines matching REGEX (logcat -e; no spaces)
@@ -87,6 +89,7 @@ pub(crate) fn parse_logs(rest: &[&str]) -> Result<Cmd, String> {
     let mut raw: Vec<String> = Vec::new();
     let mut q = adb::LogcatQuery::default();
     let mut clear = false;
+    let mut query: Vec<&str> = Vec::new();
     let mut i = 0;
     // The daemon splits logcat's argv on whitespace.
     let no_space = |flag: &str, v: &str| -> Result<String, String> {
@@ -163,12 +166,28 @@ pub(crate) fn parse_logs(rest: &[&str]) -> Result<Cmd, String> {
                 }
                 break;
             }
+            other if !other.starts_with('-') || is_negated_term(other) => query.push(other),
             other => return Err(format!("unknown logs arg: {other}")),
         }
         i += 1;
     }
     if pkg.is_some() && pid.is_some() {
         return Err("--pkg and --pid are exclusive".into());
+    }
+    let mut studio = query.join(" ");
+    if let Some(p) = &pkg {
+        studio = if studio.is_empty() { format!("package=:{p}") } else { format!("package=:{p} & ({studio})") };
+    }
+    let studio = (!studio.is_empty()).then_some(studio);
+    if let Some(s) = &studio {
+        if !formats.is_empty() {
+            return Err("--format can't be combined with --pkg or a query (they read logcat's uid column)".into());
+        }
+        let parsed = crate::device::logquery::parse(s)?;
+        if let Some(age) = parsed.age_secs {
+            q.since_secs = Some(q.since_secs.map_or(age, |s| s.max(age)));
+        }
+        formats.extend(["threadtime".to_string(), "uid".to_string()]);
     }
     let mut args: Vec<String> = Vec::new();
     for b in &buffers {
@@ -188,7 +207,7 @@ pub(crate) fn parse_logs(rest: &[&str]) -> Result<Cmd, String> {
     // logcat's -t counts before its priority / tag / regex filters (and
     // before --exclude), so with any of those only the host's tail applies.
     let filtered = level.is_some() || !tags.is_empty() || !greps.is_empty()
-        || !q.exclude.is_empty() || !raw.is_empty();
+        || !q.exclude.is_empty() || !raw.is_empty() || studio.is_some();
     if !follow {
         args.push("-d".into());
         if !filtered && q.since_secs.is_none() {
@@ -211,8 +230,15 @@ pub(crate) fn parse_logs(rest: &[&str]) -> Result<Cmd, String> {
         args.push(format!("*:{l}"));
     }
     q.args = args;
-    q.pkg = pkg;
+    q.studio = studio;
     Ok(Cmd::Adb(adb::Cmd::Logcat(q)))
+}
+
+/// `-tag:x`, `-package~:y`: a negated query term, not a flag.
+fn is_negated_term(arg: &str) -> bool {
+    let key: String = arg[1..].chars().take_while(char::is_ascii_alphabetic).collect();
+    let after = &arg[1 + key.len()..];
+    !key.is_empty() && (after.starts_with(':') || after.starts_with("~:") || after.starts_with("=:"))
 }
 
 /// logcat's `-v` formats and format modifiers.
@@ -1050,7 +1076,19 @@ mod parse_logs_tests {
         let f = q(&["--follow", "--exclude", "chatty"]);
         assert_eq!((f.args.len(), f.tail, f.exclude.as_slice()), (0, None, &["chatty".to_string()][..]));
         let p = q(&["--pkg", "com.android.settings"]);
-        assert_eq!((p.pkg.as_deref(), p.args.as_slice()), (Some("com.android.settings"), &["-d", "-t", "100"].map(String::from)[..]));
+        assert_eq!((p.studio.as_deref(), p.args.as_slice()),
+            (Some("package=:com.android.settings"), &["-v", "threadtime", "-v", "uid", "-d"].map(String::from)[..]));
+    }
+
+    #[test]
+    fn studio_queries() {
+        let s = q(&["package:mine", "-tag:chatty", "level:WARN", "age:5m"]);
+        assert_eq!((s.studio.as_deref(), s.since_secs, s.tail), (Some("package:mine -tag:chatty level:WARN age:5m"), Some(300), Some(100)));
+        assert_eq!(s.args, ["-v", "threadtime", "-v", "uid", "-d"]);
+        assert_eq!(q(&["--pkg", "a.b", "tag:X", "|", "tag:Y"]).studio.as_deref(), Some("package=:a.b & (tag:X | tag:Y)"));
+        assert!(parse_logs(&["-v", "brief", "tag:X"]).is_err());
+        assert!(parse_logs(&["level:LOUD"]).is_err());
+        assert!(parse_logs(&["-zap"]).is_err());
     }
 
     #[test]

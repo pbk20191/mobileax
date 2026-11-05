@@ -75,10 +75,13 @@ More verbs:
   Data        mobax sms | mobax calls | mobax contacts | mobax calendar | mobax notif | mobax clip
               mobax location          last-known GPS fix per provider [--json]
   System      mobax prop [KEY [VAL]] | mobax settings [NS [KEY [VAL]]]
-  Diagnostics mobax logs [--tail N | --follow] [--pkg PKG | --pid N] [--level E]
+  Diagnostics mobax logs [QUERY] [--tail N | --follow] [--pkg PKG | --pid N] [--level E]
                       [--tag T[:L]]… [--grep RE]… [--exclude TEXT]… [-i]
                       [--since 5m] [--format brief] [--crash | --buffer B]
                       [--clear] [-- LOGCAT ARGS…]  | mobax events
+                      QUERY is Android Studio's Logcat filter: 'package:mine level:W'
+                      'tag:OkHttp -tag:chatty' 'message~:time.?out' 'is:crash age:5m'
+                      (same key ORs, others AND; | & ( ) group; package: by uid)
   Follow      mobax watch [--json] [--min-ms N] [--moves]  the screen as it changes
                                        (pushed, not polled): new screens and +/~/-
                                        rows; --moves also sends frames mid-motion
