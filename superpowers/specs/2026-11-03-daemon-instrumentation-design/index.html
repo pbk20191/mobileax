@@ -1,0 +1,1030 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="A millisecond-latency CLI for driving Android devices. Built for LLM agents and shell scripts.">
+      
+      
+      
+        <link rel="canonical" href="https://pbk20191.github.io/mobileax/superpowers/specs/2026-11-03-daemon-instrumentation-design/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>데몬을 instrumentation 프로세스로 전체 이동 — 설계 - mobileAX</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,700,700i%7CJetBrains+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  
+  
+  
+  
+  
+  
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="데몬을 instrumentation 프로세스로 전체 이동 — 설계 - mobileAX">
+  <meta property="og:description" content="A millisecond-latency CLI for driving Android devices. Built for LLM agents and shell scripts.">
+  <meta property="og:url" content="https://pbk20191.github.io/mobileax/superpowers/specs/2026-11-03-daemon-instrumentation-design/">
+  <meta property="og:site_name" content="mobileAX">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="데몬을 instrumentation 프로세스로 전체 이동 — 설계 - mobileAX">
+  <meta name="twitter:description" content="A millisecond-latency CLI for driving Android devices. Built for LLM agents and shell scripts.">
+  
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebPage",
+    "headline": "\ub370\ubaac\uc744 instrumentation \ud504\ub85c\uc138\uc2a4\ub85c \uc804\uccb4 \uc774\ub3d9 \u2014 \uc124\uacc4",
+    "description": "A millisecond-latency CLI for driving Android devices. Built for LLM agents and shell scripts.",
+    "url": "https://pbk20191.github.io/mobileax/superpowers/specs/2026-11-03-daemon-instrumentation-design/",
+    
+    "publisher": {
+      "@type": "Organization",
+      "name": "mobileAX",
+      "url": "https://pbk20191.github.io/mobileax/"
+    }
+  }
+  </script>
+
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="black" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#instrumentation" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="mobileAX" class="md-header__button md-logo" aria-label="mobileAX" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            mobileAX
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              데몬을 instrumentation 프로세스로 전체 이동 — 설계
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="black" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/pbk20191/mobileax" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    pbk20191/mobileax
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../architecture/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Architecture
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../benchmark/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Benchmark
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../cookbook/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Cookbook
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../emulator/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Emulators
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../sharp-edges/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Sharp edges
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../wire/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Wire reference
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="mobileAX" class="md-nav__button md-logo" aria-label="mobileAX" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    mobileAX
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/pbk20191/mobileax" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    pbk20191/mobileax
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../benchmark/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Benchmark
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cookbook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cookbook
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../emulator/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Emulators
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../sharp-edges/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sharp edges
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../wire/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Wire reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. 의도와 이유
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. 목표 / 비목표 / 안티목표
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. 제약
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. 사용자가 정한 방식
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. 구성 요소별 이동
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#51-androidxtest" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.1 androidx.test 기반 (사용자 결정)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-mobax-clisrcdevicedaemonrs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. 기동·정리 (mobax-cli/src/device/daemon.rs)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. 검증
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. 정해 둔 세부 사항 (따로 표시한 것 외에는 내 판단)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. 빌더에게 맡기는 것
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="instrumentation">데몬을 instrumentation 프로세스로 전체 이동 — 설계<a class="headerlink" href="#instrumentation" title="Permanent link">&para;</a></h1>
+<p>날짜: 2026-11-03 · 대상: <code>src/dev/mobileax/daemon/</code> (on-device 데몬), <code>mobax-cli/src/device/daemon.rs</code> (기동·정리), 릴리즈 파이프라인</p>
+<h2 id="1">1. 의도와 이유<a class="headerlink" href="#1" title="Permanent link">&para;</a></h2>
+<p>지금 데몬은 <code>CLASSPATH=/data/local/tmp/mobax.jar app_process … dev.mobileax.daemon.Main</code>으로 뜬다. 시스템이 모르는 프로세스(AMS <code>ProcessRecord</code> 없음)가 shell uid(2000)로 돌면서, 필요한 것을 숨겨진 API로 직접 조립한다.</p>
+<ul>
+<li><code>UiAutomationConnection</code>을 리플렉션으로 생성하고, <code>UiAutomation</code> 생성자 시그니처를 SDK별로 찾고, <code>connect</code>를 재시도한다.</li>
+<li><code>ActivityThread.systemMain()</code>으로 시스템 컨텍스트를 만들고, shell(<code>com.android.shell</code>)의 <code>ApplicationInfo</code>를 빌려 Application을 바꿔 끼운다(#23).</li>
+<li><code>setRunAsMonkey</code>는 AMS가 "instrumentation 프로세스이면서 UiAutomation이 있어야 한다"를 요구해서(<code>ActivityManagerService.setUserIsMonkey</code>) 한 번도 성공하지 못했다. 그래서 매번 <code>Unknown process</code> 경고가 난다.</li>
+</ul>
+<p>사용자가 원하는 것은 두 가지다.
+1. <strong>monkey 상태를 정식 경로로 켠다.</strong> instrumentation 등록을 통해서다. <code>setActivityController(imAMonkey=true)</code> 같은 우회로는 원하지 않는다.
+2. <strong>공식 API 위에 선 구조.</strong> 기기에 APK 설치가 필요해지더라도 감수한다. 사용자가 이 둘 중 공식 API 쪽을 명시적으로 골랐다.</p>
+<p>사용자 결정: 예비 경로(app_process 방식)는 남기지 않고 <strong>전체 이동</strong>한다. 작업은 별도 브랜치(<code>daemon/instrumentation</code>)에서 한다.</p>
+<h2 id="2">2. 목표 / 비목표 / 안티목표<a class="headerlink" href="#2" title="Permanent link">&para;</a></h2>
+<p><strong>목표</strong>
+- 데몬은 설치된 APK의 instrumentation으로 돈다. <code>am instrument -w --no-hidden-api-checks … dev.mobileax.daemon/&lt;Instrumentation&gt;</code>으로 띄우고, AMS가 프로세스를 fork한다.
+- <code>UiAutomation</code>은 <code>Instrumentation.getUiAutomation()</code>으로 얻는다. 리플렉션으로 연결 객체를 조립하는 코드는 지운다.
+- monkey가 켜진다. <code>setUserIsMonkey(true)</code>가 성공하고, 기기 전체에서 <code>ActivityManager.isUserAMonkey()</code>가 true가 된다.
+- 지금의 모든 verb가 같은 결과를 낸다. 대상 verb는 <code>ui</code>, <code>see</code>, <code>tap</code>, <code>type</code>, <code>fill</code>, <code>swipe</code>, <code>go</code>, <code>open</code>, <code>close</code>, <code>install</code>, <code>uninstall</code>, <code>cp</code>, <code>apps</code>, <code>links</code>, <code>sms</code>, <code>calls</code>, <code>contacts</code>, <code>calendar</code>, <code>notif</code>, <code>clip</code>, <code>location</code>, <code>prop</code>, <code>settings</code>, <code>logs</code>, <code>events</code>, <code>watch</code>, <code>info</code>, <code>show</code>, <code>mirror</code>/<code>see</code> 스트림(jpeg, h264, tilejpeg), <code>shell</code> 경유 명령, MCP 도구다.
+- 와이어 프로토콜과 호스트 쪽(CLI, MCP, viewer, TUI)은 바뀌지 않는다. 바뀌는 건 데몬 기동·정리 경로뿐이다.</p>
+<p><strong>비목표</strong>
+- 대상 앱 프로세스 안으로 들어가는 instrumentation(<code>targetPackage</code>=다른 앱). 서명이 같아야 해서 범위 밖이다.
+- 한 기기에서 데몬 여러 개를 띄우는 것. UiAutomation이 기기당 하나뿐이고, 같은 패키지의 instrumentation은 동시에 하나만 돈다. <code>--port</code>는 소켓 이름(<code>mobaxd_&lt;port&gt;</code>)으로만 남는다.
+- Android 9~11(SDK 28~30) 지원. 아래 제약 참고.
+- 이번 작업 안에서 성능 최적화. 이동만 한다.</p>
+<p><strong>안티목표</strong> (기술적으로 돌아가도 이러면 실패)
+- 인식 경로가 눈에 띄게 느려진다. 기준선과 비교해 잡음 범위를 넘으면 실패다.
+  - 유휴 <code>ui</code> 약 265ms
+  - tap→하위 화면 중앙값 약 976ms
+  - Recents 키 응답 약 627ms
+  - 드래그 약 126ms
+  - 첫 <code>dump_active</code> 약 158ms
+- 일반적인 사용에서 기기 화면을 사람이 눌러야 한다. OEM 설정의 "USB로 설치 허용" 같은 일회성 설정은 예외로 문서화한다.
+- <code>mobax drop</code> 후에도 기기가 monkey 상태로 남는다.
+- 데몬이 죽었는데 CLI는 "daemon up"이라고 한다.</p>
+<h2 id="3">3. 제약<a class="headerlink" href="#3" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>minSdk 29</strong> (사용자 결정, 2026-11-03 갱신; 처음엔 31). <code>executeShellCommandRwe</code>가 공개 API인 건 SDK 34부터이고 31~33에서는 <code>@hide @TestApi</code>라서, shell 실행을 두 갈래로 나눴다(3안): SDK 34+는 Rwe, 29~33은 앱 외부 저장소의 파일과 <code>executeShellCommand</code>. 29가 바닥인 이유는 <code>adoptShellPermissionIdentity</code>가 29부터이기 때문이다. 검증은 SDK 36과 임시 SDK 29 AVD에서 했다. 아래는 처음 결정의 기록이다: <code>adoptShellPermissionIdentity()</code>(29+)와 <code>executeShellCommandRw</code>/<code>Rwe</code>(31+, <code>cp</code> 업로드의 표준 입력과 <code>shell</code>의 표준 에러·종료 코드에 필요)가 모두 공개 API로 있는 버전이다. 29~30용 갈래 코드는 쓰지 않는다. 검증할 기기가 SDK 36 에뮬레이터뿐이라, 그 갈래는 검증 없이 배포될 것이기 때문이다.</li>
+<li><strong>UiAutomation은 기기당 하나만 연결된다.</strong> 사용자의 UiAutomator 테스트와 동시에 쓸 수 없다. 이건 지금도 같다.</li>
+<li><strong><code>am instrument -w</code> 프로세스가 살아 있어야 한다.</strong> <code>UiAutomationConnection</code>이 이 shell 프로세스 안에 있어서, 이게 죽으면 UiAutomation도 죽는다. <code>nohup … &amp;</code>로 분리해 띄운다. 지금의 <code>app_process</code> 기동 방식과 같다.</li>
+<li><strong>데몬은 앱 uid로 돈다.</strong></li>
+<li><code>/data/local/tmp</code>를 읽고 쓸 수 없다(SELinux <code>shell_data_file</code>). 기기 로그 파일 <code>/data/local/tmp/mobax.log</code>도 데몬이 직접 쓸 수 없다.</li>
+<li><code>Runtime.exec</code>로 띄운 자식 프로세스도 앱 uid라, <code>dumpsys</code> 같은 shell 권한 명령이 실패하거나 결과가 달라진다.</li>
+<li>shell 권한은 <code>adoptShellPermissionIdentity()</code>와 <code>executeShellCommand()</code>(shell uid로 실행되고 결과가 파이프로 옴)로 얻는다.</li>
+<li><strong>abstract 소켓 도달성.</strong> CLI는 adb server를 통해 <code>localabstract:mobaxd_&lt;port&gt;</code>에 붙는다. adbd(SELinux <code>adbd</code> 도메인)가 앱 도메인이 연 abstract 소켓에 <code>connectto</code> 할 수 있어야 한다. Chrome devtools(<code>localabstract:chrome_devtools_remote</code>)가 이 방식이라 될 것으로 보지만, <strong>가장 먼저 검증할 위험</strong>이다.</li>
+<li><strong>숨겨진 API.</strong> <code>--no-hidden-api-checks</code>로 instrumentation 프로세스의 검사를 끈다. 남는 숨겨진 API 호출(예: <code>IPackageManager</code> 직접 호출)은 이 플래그에 기댄다.</li>
+<li><strong>monkey 해제.</strong> AMS main 소스에서 확인했다. instrumentation이 끝나 UiAutomation 연결이 정리될 때(<code>SHUTDOWN_UI_AUTOMATION_CONNECTION_MSG</code>) <code>mUserIsMonkey = false</code>로 되돌린다. 에뮬레이터에서도 같은지는 스파이크에서 확인한다. 다르면 <code>drop</code>이 직접 <code>setUserIsMonkey(false)</code>를 불러야 한다.</li>
+</ul>
+<h2 id="4">4. 사용자가 정한 방식<a class="headerlink" href="#4" title="Permanent link">&para;</a></h2>
+<ul>
+<li>데몬 전체를 instrumentation 프로세스로 옮긴다.</li>
+<li>설치가 필요해도 공식 API 쪽으로 간다.</li>
+<li>monkey는 instrumentation 등록을 통해 켠다.</li>
+<li>app_process 방식은 예비로 남기지 않는다.</li>
+<li>브랜치를 따서 진행한다.</li>
+<li>minSdk는 31로 올린다.</li>
+<li><strong>7절의 먼저 할 확인 1번(소켓 도달)이나 2번(monkey 켜기·끄기)이 실패하면 프로젝트를 접는다.</strong> TCP와 <code>adb forward</code>, <code>setActivityController</code> 같은 대체 방식으로 가지 않는다. 브랜치는 버리고, 무엇이 왜 실패했는지 기록만 남긴다.</li>
+</ul>
+<h2 id="5">5. 구성 요소별 이동<a class="headerlink" href="#5" title="Permanent link">&para;</a></h2>
+<p>현재 <code>src/dev/mobileax/daemon/</code> 기준이다.</p>
+<table>
+<thead>
+<tr>
+<th>영역</th>
+<th>지금</th>
+<th>이동 후</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>진입점 <code>Main.kt</code></td>
+<td><code>main()</code>: hidden-api 해제, looper 준비, <code>systemMain()</code>, Application 교체, UiAutomation 리플렉션 연결</td>
+<td><code>Instrumentation</code> 서브클래스. <code>onCreate</code>에서 <code>start()</code>, <code>onStart</code>에서 서버를 켜고 <code>getUiAutomation()</code>. <code>setRunAsMonkey(true)</code> 또는 <code>setUserIsMonkey(true)</code>를 부른다. <code>initializeMainlineModules</code>, <code>setShouldDefuse</code>, slow-log 같은 #23 초기화 중 프로세스가 이미 해 주는 것(ActivityThread.main 경로)은 지운다.</td>
+</tr>
+<tr>
+<td><code>Binders.kt</code></td>
+<td>시스템 컨텍스트, shell Application, <code>ServiceManager</code> 리플렉션</td>
+<td>컨텍스트는 <code>Instrumentation.getContext()</code>(자기 패키지) 하나만 쓴다. binder 직접 호출은 남는 곳만 유지한다.</td>
+</tr>
+<tr>
+<td><code>Loop.kt</code></td>
+<td>main looper 위의 코루틴</td>
+<td>instrumentation은 <code>onStart</code>가 main이 아닌 스레드에서 돈다. 어느 looper를 쓸지는 빌더 판단(8절)이다.</td>
+</tr>
+<tr>
+<td><code>Input</code>, <code>Gestures</code>, <code>Dumper</code>, <code>Waits</code>, <code>UiEvents</code>, <code>NodeActions</code>, <code>Traverse</code>, <code>UiWatch</code></td>
+<td>우리가 만든 UiAutomation</td>
+<td>같은 코드, <code>getUiAutomation()</code>이 준 객체. 3-arg <code>injectInputEvent</code> 리플렉션은 유지하고 검증한다.</td>
+</tr>
+<tr>
+<td><code>Screenshot</code>, <code>Streams</code>, <code>TileStreamer</code>, <code>Frames</code></td>
+<td>미러 가상 디스플레이(shell 신원 wrapper)</td>
+<td>자기 패키지 컨텍스트로 만든다. <code>CAPTURE_VIDEO_OUTPUT</code> 같은 권한은 <code>adoptShellPermissionIdentity</code>로 얻는다.</td>
+</tr>
+<tr>
+<td><code>Installer</code>, <code>Pm</code>, <code>Manifest</code></td>
+<td>shell uid로 PackageInstaller/IPackageManager</td>
+<td><code>adoptShellPermissionIdentity</code> 아래에서 같은 호출. 설치할 APK 파일 접근은 아래 파일 작업 참고.</td>
+</tr>
+<tr>
+<td><code>Transfers</code> (<code>cp</code>), <code>ProcStream</code>, <code>Logx</code>(파일)</td>
+<td><code>/data/local/tmp</code> 직접 읽기·쓰기, <code>Runtime.exec</code></td>
+<td><code>executeShellCommand</code>(shell uid의 <code>cat</code>, <code>sh -c</code>)로 파이프를 통해 바이트를 옮긴다. 다른 방식도 빌더 판단(8절)이다.</td>
+</tr>
+<tr>
+<td><code>Notifications</code>, <code>Location</code>, <code>SettingsApi</code>, <code>Screenshot.findSecureWindow</code></td>
+<td><code>Runtime.exec("dumpsys"/"settings"/…)</code></td>
+<td><code>executeShellCommand</code>로 바꾼다.</td>
+</tr>
+<tr>
+<td><code>Providers</code>, <code>SettingsDirect</code>, <code>Clipboard</code>, <code>Props</code>, <code>Am</code>, <code>Wm</code>, <code>State</code></td>
+<td>shell uid binder 호출</td>
+<td><code>adoptShellPermissionIdentity</code> 아래에서 유지한다. 앱 uid라 동작이 달라지는 곳(백그라운드 클립보드 읽기, <code>SystemProperties.set</code> 등)은 <code>executeShellCommand</code>로 돌린다.</td>
+</tr>
+<tr>
+<td><code>MobaxServer</code>, <code>Conn</code>, <code>Dispatch</code>, <code>Server</code></td>
+<td>abstract 소켓 서버</td>
+<td>그대로. 소켓 이름도 그대로.</td>
+</tr>
+<tr>
+<td><code>AndroidManifest.xml</code></td>
+<td>AGP를 위한 빈 <code>&lt;application&gt;</code></td>
+<td><code>&lt;instrumentation android:name=… android:targetPackage="dev.mobileax.daemon"&gt;</code>. 권한 선언은 최소로 하고, shell 권한은 adopt로 얻는다.</td>
+</tr>
+<tr>
+<td>빌드</td>
+<td>릴리즈 APK를 <code>build/mobax.jar</code>로 복사 (서명 없음)</td>
+<td>같은 APK를 설치용 산출물로 쓴다. 서명은 8절.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="51-androidxtest">5.1 androidx.test 기반 (사용자 결정)<a class="headerlink" href="#51-androidxtest" title="Permanent link">&para;</a></h2>
+<p>사용자 결정은 두 가지다. 진입점은 <code>AndroidJUnitRunner</code>의 부모 클래스(<code>androidx.test.runner.MonitoringInstrumentation</code>)를 상속한다. 그리고 가능한 부분은 모두 androidx.test 기반으로 바꾼다.</p>
+<ul>
+<li><strong>진입점.</strong> <code>MobaxInstrumentation : MonitoringInstrumentation</code>.</li>
+<li><code>AndroidJUnitRunner</code> 자체는 쓰지 않는다. 테스트를 다 돌린 뒤 <code>finish()</code>해 버려서 계속 떠 있어야 하는 데몬과 맞지 않기 때문이다.</li>
+<li><code>MonitoringInstrumentation</code>이 해 주는 것(<code>InstrumentationRegistry</code> 등록, 크래시 시 정리)은 그대로 받는다.</li>
+<li><strong>전역 접근.</strong> instrumentation, context, 인자는 <code>androidx.test.platform.app.InstrumentationRegistry</code>(<code>androidx.test:monitor</code>)로 얻는다. 데몬 자체의 전역 객체는 만들지 않는다.</li>
+<li><strong>UiAutomation 소유.</strong> <code>androidx.test.uiautomator</code>의 <code>UiDevice</code>와 데몬이 같은 UiAutomation 인스턴스를 쓴다.</li>
+<li>연결 플래그는 <code>Configurator.setUiAutomationFlags</code>로 하나로 맞춘다. 플래그가 다르면 <code>getUiAutomation(flags)</code>이 다시 연결하기 때문이다.</li>
+<li><strong>대체 기준.</strong> 데몬의 각 경로를 androidx.test(주로 <code>UiDevice</code>, <code>By</code>/<code>Until</code>)로 바꿀 수 있으면 바꾼다. 다만 2절 안티목표의 지연 기준선을 해치거나 결과를 바꾸면 지금 코드를 유지하고, 그 이유를 코드 주석에 남긴다.</li>
+<li>미리 알려진 유지 대상:<ul>
+<li>애니메이션을 기다리지 않는 입력 주입(3-arg <code>injectInputEvent</code>). <code>UiDevice.click</code>/<code>pressKeyCode</code>/<code>pressRecentApps</code>는 동기 주입이라 애니메이션을 기다린다. Recents 키는 측정상 5492ms 대 627ms였다.</li>
+<li><code>settle_dump</code>와 JSON dump. <code>dumpWindowHierarchy</code>는 XML이고 호스트 파서와 맞지 않는다.</li>
+<li>미러 스크린샷 경로. <code>UiDevice.takeScreenshot</code>은 한 장씩 찍는다.</li>
+<li>stderr와 종료 코드가 필요한 shell 실행. <code>UiDevice.executeShellCommand</code>는 stdout만 준다.</li>
+</ul>
+</li>
+<li>선택자 문법은 호스트(<code>mobax-core</code>)에 있고 와이어로 오므로 <code>By</code>로 바꾸지 않는다.</li>
+<li><strong>의존성.</strong> <code>androidx.test:runner</code>, <code>androidx.test:monitor</code>, <code>androidx.test.uiautomator:uiautomator</code>의 구현 시점 최신 안정 버전을 정확한 버전으로 고정한다. 쓰지 않는 코드(JUnit 등)는 R8로 걷어 낸다.</li>
+</ul>
+<h2 id="6-mobax-clisrcdevicedaemonrs">6. 기동·정리 (<code>mobax-cli/src/device/daemon.rs</code>)<a class="headerlink" href="#6-mobax-clisrcdevicedaemonrs" title="Permanent link">&para;</a></h2>
+<p><strong><code>mobax use</code></strong>
+- 빠른 경로는 유지한다. <code>ping</code>에 응답하면 그대로 쓴다.
+- 느린 경로:
+  1. 이전 데몬을 정리한다(<code>am force-stop dev.mobileax.daemon</code>, 남은 <code>am instrument</code> 프로세스).
+  2. 설치된 버전과 CLI가 가진 APK를 비교한다. 다르면 <code>/data/local/tmp</code>에 push하고 <code>pm install -r -t</code>로 설치한다(shell이 하므로 가능).
+  3. <code>nohup am instrument -w --no-hidden-api-checks -e port N dev.mobileax.daemon/&lt;Instrumentation&gt; &gt; /data/local/tmp/mobax.log 2&gt;&amp;1 &amp;</code>로 띄운다.
+  4. ping을 기다린다.
+- 버전 비교는 "jar가 바뀌어도 옛 데몬을 그대로 씀" 문제도 함께 해결해야 한다. 버전 문자열이 같아도 APK 내용이 다르면 다시 설치한다.</p>
+<p><strong><code>mobax drop</code></strong>
+- instrumentation을 끝내고(<code>am force-stop</code>), monkey가 꺼진 것까지 확인한다.</p>
+<p><strong>로그</strong>
+- 데몬은 <code>/data/local/tmp/mobax.log</code>를 직접 쓸 수 없다.
+- <code>am instrument -w</code>의 표준 출력은 shell이 그 파일로 받으므로, 부팅 줄(<code>mobaxd listening …</code>, <code>ready</code> 등)을 <code>Instrumentation.sendStatus</code>로 내보내면 그 파일에 남는다. 지금 CLI가 그 파일을 읽어 기동 실패를 보여 주는 동작을 유지하는 게 목적이다. 방식은 빌더 판단이다.</p>
+<h2 id="7">7. 검증<a class="headerlink" href="#7" title="Permanent link">&para;</a></h2>
+<p><strong>먼저 할 것 (위험 순, 각각 짧은 스파이크로 확인).</strong> 1번이나 2번이 실패하면 여기서 멈춘다(4절).
+1. 앱 uid 프로세스가 연 <code>localabstract</code> 소켓에 adb server 경유로 붙을 수 있는가. 에뮬레이터 SDK 36 기준.
+2. <code>am instrument -w</code>로 띄운 프로세스에서 <code>setUserIsMonkey(true)</code>가 성공하고 <code>isUserAMonkey()</code>가 true인가. force-stop 후에는 false로 돌아오는가.
+3. <code>getUiAutomation()</code> 객체로 3-arg <code>injectInputEvent</code>(애니메이션 대기 없음)가 동작하는가.
+4. <code>adoptShellPermissionIdentity</code> 아래에서 미러 가상 디스플레이, <code>pm install</code>, settings 쓰기, SMS 프로바이더 읽기가 되는가.</p>
+<p><strong>완료 판정</strong>
+- 2절 목표의 verb 전체를 에뮬레이터(SDK 36)에서 다시 돌려 이전과 같은 결과가 나온다. #23 때 돌린 스모크 목록과 이번 검증을 위해 추가한 verb가 대상이다.
+- 2절 안티목표의 지연 기준선과 비교해 회귀가 없다. 같은 에뮬레이터, 같은 방법으로 측정한다.
+- <code>mobax drop</code> 후 monkey가 false다. 데몬 프로세스와 <code>am</code> 프로세스가 남지 않는다.
+- Rust 쪽 <code>cargo test</code>, <code>cargo clippy</code>, Gradle 빌드가 통과한다.
+- 릴리즈 드라이런(<code>gh workflow run release.yml --ref &lt;branch&gt; -f tag=vX-dryrun</code>)이 통과하고 자산 구성이 맞다.</p>
+<h2 id="8">8. 정해 둔 세부 사항 (따로 표시한 것 외에는 내 판단)<a class="headerlink" href="#8" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>서명 (사용자 결정).</strong> 릴리즈 APK도 AGP debug 키(<code>signingConfigs.debug</code>)로 서명한다. 서명은 설치를 통과하는 용도일 뿐 신뢰의 근거가 아니다. 키 파일을 저장소에 두지 않고, CI 시크릿도 쓰지 않는다.</li>
+<li>그 결과 빌드한 곳(각자의 PC, CI 러너)마다 서명이 다르다. 기기의 서명이 다르면(<code>INSTALL_FAILED_UPDATE_INCOMPATIBLE</code>) <code>use</code>가 자동으로 지우고 다시 설치한다. 데몬 패키지에는 보존할 데이터가 없다.</li>
+<li><strong>monkey와 "같은 결과" 목표가 부딪칠 때.</strong> monkey는 사용자가 원한 의도된 변화라 monkey가 우선한다. monkey 때문에 앱이나 Settings 동작이 달라지는 경우는 실패로 보지 않고 <code>docs/sharp-edges.md</code>에 적는다. 2절의 "같은 결과"는 데몬 이동 때문에 생기는 차이에만 적용한다.</li>
+<li><strong><code>drop</code>과 패키지.</strong> 지금의 jar 처리와 같은 의미로 둔다. <code>drop</code>은 패키지를 지우고, 지금 <code>keep_jar</code>가 하던 일은 "패키지 유지"가 된다.</li>
+<li><code>apps</code>, <code>devices</code>, MCP 출력에서는 데몬 자신의 패키지(<code>dev.mobileax.daemon</code>)를 숨긴다.</li>
+<li><code>devices</code>의 <code>jar_present</code>는 "설치 여부"로 바꾼다.</li>
+<li><strong>다른 <code>--port</code>로 <code>use</code>할 때.</strong> 데몬이 이미 포트 N에서 돌고 있는데 포트 M으로 <code>use</code>하면 오류로 멈춘다. 다른 클라이언트가 쓰는 데몬을 몰래 끊지 않기 위해서다. 오류 메시지에는 <code>mobax drop</code> 후 다시 하라는 안내를 넣는다.</li>
+</ul>
+<h2 id="9">9. 빌더에게 맡기는 것<a class="headerlink" href="#9" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>Instrumentation</code> 안에서 서버와 코루틴 루프를 어느 looper·스레드에 둘지. 현재 <code>Loop.kt</code>의 main looper 전제를 어떻게 옮길지.</li>
+<li>파일 작업(<code>cp</code>, 설치할 APK, 프로세스 스트리밍)을 <code>executeShellCommand</code> 파이프로 할지 다른 방식으로 할지. 단, 2절 안티목표의 성능 기준은 지켜야 한다.</li>
+<li>설치 버전 비교 방법(versionCode, APK 해시 등).</li>
+<li>부팅 로그를 호스트로 전달하는 방법(6절).</li>
+<li>릴리즈 자산 이름을 <code>mobax.jar</code>로 유지할지 <code>mobaxd.apk</code>로 바꿀지. 바꾸면 <code>release.yml</code>, <code>scripts/mcpb-stage.mjs</code>, CLI의 <code>locate_jar</code>, 설치 스크립트를 함께 맞춘다.</li>
+<li>문서 갱신 범위(<code>docs/architecture.md</code>, <code>docs/sharp-edges.md</code>, <code>README.md</code>의 app_process 언급).</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.top", "navigation.tabs", "navigation.sections", "navigation.indexes", "content.code.copy", "search.suggest", "search.highlight"], "search": "../../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+    
+  </body>
+</html>
