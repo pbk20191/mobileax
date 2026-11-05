@@ -9,6 +9,7 @@
  * build-tools, downloaded if missing), Kotlin, and R8.
  *
  *   ./gradlew mobaxJar mobaxApk              build both
+ *   ./gradlew benchToastApk                  the agent benchmark's toast app
  */
 
 // Gradle's own outputs stay out of build/, which holds only the deployables.
@@ -27,6 +28,7 @@ fun copyApk(name: String, module: String, out: String, what: String) = tasks.reg
 
 val mobaxJar = copyApk("mobaxJar", ":daemon:shell", "mobax.jar", "Builds build/mobax.jar for app_process.")
 val mobaxApk = copyApk("mobaxApk", ":daemon:instr", "mobaxd.apk", "Builds build/mobaxd.apk for am instrument.")
+copyApk("benchToastApk", ":bench:toast-app", "bench-toast.apk", "Builds build/bench-toast.apk for the agent benchmark (s6).")
 
 tasks.register("assemble") {
     group = "build"
