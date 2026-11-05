@@ -80,7 +80,7 @@ fi
 mkdir -p "$DIR"
 # Preserve any user state files in $DIR (state-<port>.json etc.); only
 # remove the binaries we're about to overwrite.
-for f in mobax mobax-viewer mobax-tui mobax.jar LICENSE VERSION; do
+for f in mobax mobax-viewer mobax-tui mobax.jar mobaxd.apk LICENSE VERSION; do
   rm -f "$DIR/$f"
 done
 tar -xzf "$TMP/$ASSET" -C "$DIR" --strip-components=1
@@ -125,6 +125,7 @@ say "  installed:  $DIR/mobax"
 [ -f "$DIR/mobax-viewer" ] && say "  viewer:     $DIR/mobax-viewer"
 [ -f "$DIR/mobax-tui" ]    && say "  tui:        $DIR/mobax-tui"
 say "  daemon jar: $DIR/mobax.jar"
+[ -f "$DIR/mobaxd.apk" ] && say "  daemon apk: $DIR/mobaxd.apk"
 
 if [ -n "$LINKED" ]; then
   say "  symlinked:  $LINKED/mobax"
