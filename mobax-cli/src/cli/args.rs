@@ -612,6 +612,10 @@ pub(crate) fn parse_args(args: &[String]) -> Result<Opts, String> {
                 crate::outln!("{USAGE}");
                 std::process::exit(0);
             }
+            "-V" | "--version" => {
+                crate::outln!("mobax {}", crate::VERSION);
+                std::process::exit(0);
+            }
             // Everything after `--` belongs to the verb (`mobax logs -- -s TAG`).
             "--" => {
                 positional.extend(args[i..].iter().map(String::as_str));

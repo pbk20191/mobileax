@@ -9,6 +9,13 @@ use std::io::{self, Write};
 use std::process::ExitCode;
 
 mod cli;
+
+/// This build's version: what CI or a release stamps through MOBAX_VERSION
+/// at build time (`0.5.2-ci.12`, a tag's `0.6.0`), else Cargo's.
+pub(crate) const VERSION: &str = match option_env!("MOBAX_VERSION") {
+    Some(v) => v,
+    None => env!("CARGO_PKG_VERSION"),
+};
 mod cmd;
 mod device;
 mod mcp;

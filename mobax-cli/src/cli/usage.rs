@@ -107,6 +107,7 @@ Global options:
                      (default: $MOBILEAX_SERIAL / $ANDROID_SERIAL, the device
                      `mobax use` picked last, or the only one attached)
   --json             default output to JSON (or set HS_FORMAT=json)
+  --version, -V      print the version
 
 Low-level / debugging:
   mobax dev <sub>       ping | snapshot | screen | bench [-n N] [--json] | quit | state-daemon

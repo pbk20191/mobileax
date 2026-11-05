@@ -201,7 +201,7 @@ fn initialize(params: Option<&Value>) -> String {
     encode_str(&mut instructions, INSTRUCTIONS);
     format!(
         r#"{{"protocolVersion":"{version}","capabilities":{{"tools":{{}}}},"serverInfo":{{"name":"mobileax","version":"{}"}},"instructions":{instructions}}}"#,
-        env!("CARGO_PKG_VERSION")
+        crate::VERSION
     )
 }
 

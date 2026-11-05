@@ -103,6 +103,19 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libavcodec-dev libavutil-dev
 
+      # The tag, so VERSION, the .mcpb and `mobax --version` agree.
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            tag="${GITHUB_REF_NAME}"
+          else
+            tag="${{ github.event.inputs.tag }}"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "MOBAX_VERSION=${tag#v}" >> "$GITHUB_ENV"
+
       - name: Build mobax
         shell: bash
         run: cargo build --release --locked -p mobax --target ${{ matrix.target }}
@@ -121,16 +134,6 @@ jobs:
         with:
           name: jar
           path: build
-
-      - name: Resolve version
-        id: ver
-        shell: bash
-        run: |
-          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
-            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Stage release tree
         shell: bash
