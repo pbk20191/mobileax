@@ -8,9 +8,9 @@ import kotlinx.coroutines.withContext
 import kotlin.concurrent.Volatile
 
 /**
- * What differs between the two daemons built on this module: the
- * app_process one (daemon/shell, the shell uid) and the instrumentation
- * (daemon/instr, an app uid with the shell's permissions adopted). Each
+ * What differs between the two ways daemon/app runs this module: under
+ * app_process (ShellHost, the shell uid) and as an instrumentation
+ * (InstrHost, an app uid with the shell's permissions adopted). Each
  * entry point sets [current] before anything else runs.
  */
 interface Host {
@@ -20,7 +20,8 @@ interface Host {
     /** The callingPackage for binder calls: it must belong to our uid. */
     val callerPackage: String
 
-    /** Our own installed package, hidden from package lists; null when there is none. */
+    /** Our own package, hidden from package lists with its androidTest
+     *  package (`<it>.instr`); null when there is none. */
     val selfPackage: String?
 
     /** A startup line for /data/local/tmp/mobax.log. */
@@ -54,6 +55,10 @@ interface Host {
 internal val ctx: Context get() = Host.it.context
 internal val callerPackage: String get() = Host.it.callerPackage
 internal val selfPackage: String? get() = Host.it.selfPackage
+
+/** [selfPackage] or its androidTest package: the daemon, not an app. */
+internal fun isSelf(pkg: String): Boolean =
+    selfPackage.let { it != null && (pkg == it || pkg == "$it.instr") }
 
 /** Before the host is set (the first startup steps), stdout. */
 internal fun startupLine(line: String) = Host.current?.startupLine(line) ?: println(line)

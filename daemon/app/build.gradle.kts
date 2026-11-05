@@ -1,8 +1,15 @@
 /*
- * The instrumentation daemon: installed and run as an instrumentation
- * (`am instrument … dev.mobileax.daemon/.MobaxInstrumentation`), an app uid
- * with the shell's permissions adopted. It instruments itself, so one APK
- * is the whole install. `./gradlew mobaxApk` copies it to build/mobaxd.apk.
+ * The daemon APK, started two ways:
+ *
+ *  - app_process: Main runs with this APK on CLASSPATH (app_process only
+ *    needs classes.dex inside a zip) as the shell uid. The APK is pushed,
+ *    not installed.
+ *  - am instrument: this APK installed, plus its androidTest APK
+ *    (src/androidTest: only MobaxInstrumentation), which instruments it.
+ *    The daemon runs in this APK's process (InstrEntry.kt and the rest of
+ *    that host), an app uid with the shell's permissions adopted.
+ *
+ * `./gradlew mobaxApk` copies both to build/: mobaxd.apk and mobaxd-instr.apk.
  */
 plugins {
     id("com.android.application")
@@ -14,15 +21,19 @@ android {
 
     defaultConfig {
         applicationId = "dev.mobileax.daemon"
-        minSdk = 29
+        minSdk = 28
         targetSdk = 36
+        testApplicationId = "dev.mobileax.daemon.instr"
+        testInstrumentationRunner = "dev.mobileax.daemon.MobaxInstrumentation"
     }
 
     // One key for every build, committed with its password, as Appium does
     // for its UiAutomator2 server: the signature proves nothing (installing
     // takes adb anyway), it only has to stay the same, so a device keeps
     // its copy across this machine's, another's and CI's builds instead of
-    // `mobax use` uninstalling it for a different debug key.
+    // `mobax use` uninstalling it for a different debug key. An
+    // instrumentation must be signed like the package it instruments, so
+    // the androidTest APK takes the same key. app_process ignores it.
     signingConfigs {
         create("mobaxd") {
             storeFile = file("mobaxd.p12")
@@ -32,6 +43,9 @@ android {
             keyPassword = "mobileax"
         }
     }
+
+    // The androidTest APK is built against the release APK, R8 and all.
+    testBuildType = "release"
 
     buildTypes {
         debug {
@@ -81,6 +95,7 @@ kotlin {
 
 dependencies {
     implementation(project(":daemon:core"))
-    implementation("androidx.test:runner:1.7.0")
+    // InstrumentationRegistry (both hosts) and MonitoringInstrumentation,
+    // which the androidTest MobaxInstrumentation extends.
     implementation("androidx.test:monitor:1.8.0")
 }

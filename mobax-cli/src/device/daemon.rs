@@ -1,9 +1,10 @@
 // connect / disconnect / devices — manages the on-device mobileax daemon
-// lifecycle from the host. Two builds of the same daemon: the APK (install
-// it when the device's copy isn't this build, start it with `am instrument`;
-// the default where it's found and the device runs Android 10+) and the jar
-// (push it, start it with app_process as the shell uid; the fallback when
-// the APK can't be installed or started). `use --instr|--jar` or
+// lifecycle from the host. One daemon APK (mobaxd.apk), started two ways:
+// installed with its androidTest APK (mobaxd-instr.apk) when the device's
+// copies aren't this build, and run by `am instrument` (the default where
+// both are found and the device runs Android 10+); or pushed and run by
+// app_process as the shell uid ("jar", the fallback when the instrumentation
+// can't be installed or started). `use --instr|--jar` or
 // MOBAX_DAEMON=instr|jar picks one. Disconnect stops either and removes both.
 
 use std::io;
@@ -18,30 +19,32 @@ use mobax_core::adb_server::{self, Forward as ForwardEntry};
 use mobax_core::device::{clear_current, home_dir, is_set, write_current};
 
 use crate::state_cache;
-use super::install::{self, InstallOutcome, DEVICE_APK, DEVICE_FP, PKG};
+use super::install::{self, InstallOutcome, DEVICE_APK, DEVICE_FP, DEVICE_INSTR_APK, INSTR_PKG, PKG};
 
 pub(crate) use mobax_core::adb_server::{device_stream, DEFAULT_PORT};
 pub(crate) use mobax_core::device::{set_target, target_serial, with_target};
 
-const DEVICE_JAR: &str = "/data/local/tmp/mobax.jar";
+/// Where 0.6 and earlier pushed the app_process daemon; `drop` still removes it.
+const LEGACY_JAR: &str = "/data/local/tmp/mobax.jar";
 const DEVICE_LOG: &str = "/data/local/tmp/mobax.log";
 /// The instance (port) the instrumentation daemon was started with: one per device.
 const DEVICE_PORT: &str = "/data/local/tmp/mobaxd.port";
 
-/// Locate the on-device jar on the host. Probes (in order):
-///   1. $MOBILEAX_JAR
-///   2. <exe_dir>/mobax.jar          — release tarball layout
-///   3. <exe_dir>/../build/mobax.jar (and ../../, ../../../)
-///   4. ~/.mobileax/mobax.jar        — curl-installer layout (found even when
+/// Locate the daemon APK on the host. Probes (in order):
+///   1. $MOBILEAX_APK
+///   2. <exe_dir>/mobaxd.apk          — release tarball layout
+///   3. <exe_dir>/../build/mobaxd.apk (and ../../, ../../../)
+///   4. ~/.mobileax/mobaxd.apk        — curl-installer layout (found even when
 ///      <exe_dir> is the /usr/local/bin a symlink points from)
-///   5. ./build/mobax.jar            — dev checkout
-pub(crate) fn locate_jar() -> io::Result<PathBuf> {
-    locate_build("mobax.jar", "MOBILEAX_JAR")
-}
-
-/// The instrumentation APK, probed like [`locate_jar`] ($MOBILEAX_APK, mobaxd.apk).
+///   5. ./build/mobaxd.apk            — dev checkout
 pub(crate) fn locate_apk() -> io::Result<PathBuf> {
     locate_build("mobaxd.apk", "MOBILEAX_APK")
+}
+
+/// Its androidTest APK, the instrumentation, probed like [`locate_apk`]
+/// ($MOBILEAX_INSTR_APK, mobaxd-instr.apk).
+pub(crate) fn locate_instr_apk() -> io::Result<PathBuf> {
+    locate_build("mobaxd-instr.apk", "MOBILEAX_INSTR_APK")
 }
 
 fn locate_build(name: &str, env: &str) -> io::Result<PathBuf> {
@@ -351,7 +354,7 @@ fn start(opts: &ConnectOpts) -> io::Result<(String, u16)> {
                 return Ok((serial, port));
             }
             let sdk = device_sh(&serial, "getprop ro.build.version.sdk").trim().parse::<u32>().unwrap_or(0);
-            if locate_apk().is_ok() && sdk >= INSTR_MIN_SDK {
+            if locate_apk().is_ok() && locate_instr_apk().is_ok() && sdk >= INSTR_MIN_SDK {
                 match connect_instr(serial.clone(), port) {
                     Ok(r) => return Ok(r),
                     // Another instance holds the device: the jar would cut it off too.
@@ -375,18 +378,18 @@ fn start(opts: &ConnectOpts) -> io::Result<(String, u16)> {
 
     // --- slow path: (re)start the daemon ---
 
-    let jar = locate_jar()?;
+    let jar = locate_apk()?;
 
     // 1. Stop any prior daemon, of either build.
     stop_daemon(&serial)?;
 
-    // 2. Push jar.
+    // 2. Push the APK: app_process only needs the classes.dex in it.
     let jar_str = jar.to_string_lossy();
-    adb_ok(Some(&serial), &["push", &jar_str, DEVICE_JAR], "push jar")?;
+    adb_ok(Some(&serial), &["push", &jar_str, DEVICE_APK], "push apk")?;
 
     // 3. Start the daemon detached.
     let start = format!(
-        "CLASSPATH={DEVICE_JAR} nohup app_process /system/bin \
+        "CLASSPATH={DEVICE_APK} nohup app_process /system/bin \
          --nice-name=mobaxd dev.mobileax.daemon.Main --port={port} > {DEVICE_LOG} 2>&1 &"
     );
     adb_ok(Some(&serial), &["shell", &start], "start daemon")?;
@@ -406,7 +409,7 @@ fn start(opts: &ConnectOpts) -> io::Result<(String, u16)> {
     Err(io::Error::other(startup_failure(&jar, &r.stdout)))
 }
 
-/// Why `use` gave up: which jar it ran (the probe can fall back to another
+/// Why `use` gave up: which APK it ran (the probe can fall back to another
 /// checkout's build/, which may not match this binary) and the device log.
 fn startup_failure(jar: &Path, log: &str) -> String {
     let log = if log.trim().is_empty() {
@@ -416,17 +419,18 @@ fn startup_failure(jar: &Path, log: &str) -> String {
     };
     format!(
         "daemon did not come up within 6s, running {}\n\
-         If that jar is not from this build, point MOBILEAX_JAR at the right one.\n\
+         If that APK is not from this build, point MOBILEAX_APK at the right one.\n\
          --- device log ---\n{log}",
         jar.display()
     )
 }
 
-/// `use --instr`: the instrumentation APK, installed when the device's copy
-/// isn't this build.
+/// `use --instr`: the daemon APK and its instrumentation, installed when the
+/// device's copies aren't this build.
 fn connect_instr(serial: String, port: u16) -> io::Result<(String, u16)> {
     let apk = locate_apk()?;
-    let fp = local_fingerprint(&apk)?;
+    let instr = locate_instr_apk()?;
+    let fp = instr_fingerprint(&apk, &instr)?;
 
     // Fast path: the instrumentation answers and runs this build.
     if ping_daemon(&serial, port).is_ok()
@@ -445,7 +449,7 @@ fn connect_instr(serial: String, port: u16) -> io::Result<(String, u16)> {
     refuse_other_port(&serial, port, running)?;
 
     stop_daemon(&serial)?;
-    ensure_installed(&serial, &apk, &fp)?;
+    ensure_installed(&serial, &apk, &instr, &fp)?;
 
     adb_ok(Some(&serial), &["shell", &format!("echo {port} > {DEVICE_PORT}")], "record port")?;
     adb_ok(Some(&serial), &["shell", &install::instrument_cmd(port, DEVICE_LOG)], "start daemon")?;
@@ -484,7 +488,9 @@ fn stale_instr(serial: &str) -> bool {
     let running = device_sh(serial, &format!("pidof {PKG} >/dev/null && cat {DEVICE_FP} 2>/dev/null"));
     let running = running.trim();
     !running.is_empty()
-        && locate_apk().and_then(|apk| local_fingerprint(&apk)).is_ok_and(|fp| fp != running)
+        && locate_apk()
+            .and_then(|apk| instr_fingerprint(&apk, &locate_instr_apk()?))
+            .is_ok_and(|fp| fp != running)
 }
 
 fn refuse_other_port(serial: &str, port: u16, running: Option<u16>) -> io::Result<()> {
@@ -528,35 +534,48 @@ fn stop_daemon(serial: &str) -> io::Result<()> {
     Ok(())
 }
 
-/// Installs the APK unless the device already has this build. A copy signed
-/// by another key (a build from before the committed key) is replaced.
-fn ensure_installed(serial: &str, apk: &Path, fp: &str) -> io::Result<()> {
-    let have = device_sh(serial, &format!("pm path {PKG} >/dev/null && cat {DEVICE_FP} 2>/dev/null"));
+/// Installs both APKs unless the device already has this build: the daemon
+/// first, then the instrumentation that names it as its target.
+fn ensure_installed(serial: &str, apk: &Path, instr: &Path, fp: &str) -> io::Result<()> {
+    let have = device_sh(serial, &format!(
+        "pm path {PKG} >/dev/null && pm path {INSTR_PKG} >/dev/null && cat {DEVICE_FP} 2>/dev/null"));
     if have.trim() == fp { return Ok(()); }
-    adb_ok(Some(serial), &["push", &apk.to_string_lossy(), DEVICE_APK], "push apk")?;
+    install_one(serial, apk, DEVICE_APK, PKG)?;
+    install_one(serial, instr, DEVICE_INSTR_APK, INSTR_PKG)?;
+    adb_ok(Some(serial), &["shell", &format!("echo {fp} > {DEVICE_FP}")], "record install")?;
+    Ok(())
+}
+
+/// Pushes and installs one APK. A copy signed by another key (a build from
+/// before the committed key) is replaced.
+fn install_one(serial: &str, apk: &Path, at: &str, pkg: &str) -> io::Result<()> {
+    adb_ok(Some(serial), &["push", &apk.to_string_lossy(), at], "push apk")?;
     let pm_install = || -> io::Result<InstallOutcome> {
-        let r = adb(Some(serial), &["shell", "pm", "install", "-r", "-t", DEVICE_APK])?;
+        let r = adb(Some(serial), &["shell", "pm", "install", "-r", "-t", at])?;
         Ok(install::parse_pm_install(&format!("{}{}", r.stdout, r.stderr)))
     };
     let outcome = match pm_install()? {
         InstallOutcome::SignatureMismatch => {
-            let _ = adb(Some(serial), &["shell", "pm", "uninstall", PKG]);
+            let _ = adb(Some(serial), &["shell", "pm", "uninstall", pkg]);
             pm_install()?
         }
         o => o,
     };
     match outcome {
-        InstallOutcome::Ok => {}
-        InstallOutcome::SignatureMismatch => return Err(io::Error::other(
-            format!("install {PKG}: signatures still differ after uninstalling it"))),
-        InstallOutcome::Failed(m) => return Err(io::Error::other(format!("install {PKG}: {m}"))),
+        InstallOutcome::Ok => Ok(()),
+        InstallOutcome::SignatureMismatch => Err(io::Error::other(
+            format!("install {pkg}: signatures still differ after uninstalling it"))),
+        InstallOutcome::Failed(m) => Err(io::Error::other(format!("install {pkg}: {m}"))),
     }
-    adb_ok(Some(serial), &["shell", &format!("echo {fp} > {DEVICE_FP}")], "record install")?;
-    Ok(())
 }
 
-/// [`install::fingerprint`] of the local APK, cached by size and mtime under
-/// ~/.mobileax so a `use` doesn't hash the file every time.
+/// The two APKs' fingerprints as one: either changing means reinstalling.
+fn instr_fingerprint(apk: &Path, instr: &Path) -> io::Result<String> {
+    Ok(format!("{}-{}", local_fingerprint(apk)?, local_fingerprint(instr)?))
+}
+
+/// [`install::fingerprint`] of a local APK, cached by path, size and mtime
+/// under ~/.mobileax so a `use` doesn't hash the file every time.
 fn local_fingerprint(apk: &Path) -> io::Result<String> {
     let meta = std::fs::metadata(apk)?;
     let mtime = meta.modified().ok()
@@ -637,8 +656,9 @@ pub(crate) fn disconnect(opts: &DisconnectOpts) -> io::Result<()> {
     // 4. Remove the jar and the APK unless asked to keep them.
     if !opts.keep_jar {
         let _ = device_sh(&serial, &format!(
-            "[ -f {DEVICE_FP} ] && pm uninstall {PKG} >/dev/null; \
-             rm -f {DEVICE_JAR} {DEVICE_LOG} {DEVICE_APK} {DEVICE_FP} {DEVICE_PORT}"
+            "[ -f {DEVICE_FP} ] && pm uninstall {INSTR_PKG} >/dev/null; \
+             [ -f {DEVICE_FP} ] && pm uninstall {PKG} >/dev/null; \
+             rm -f {LEGACY_JAR} {DEVICE_LOG} {DEVICE_APK} {DEVICE_INSTR_APK} {DEVICE_FP} {DEVICE_PORT}"
         ));
     } else {
         let _ = device_sh(&serial, &format!("rm -f {DEVICE_PORT}"));
@@ -702,7 +722,7 @@ pub(crate) fn devices() -> io::Result<Vec<DeviceRow>> {
                 // One batched shell call covers all four probes — saves 3
                 // round-trips vs the original four separate `adb shell`s.
                 let cmd = format!(
-                    "test -f {DEVICE_JAR} -o -f {DEVICE_FP} && echo jar=1 || echo jar=0; \
+                    "test -f {DEVICE_APK} -o -f {DEVICE_FP} && echo jar=1 || echo jar=0; \
                      pidof mobaxd {PKG} >/dev/null && echo run=1 || echo run=0; \
                      echo sdk=$(getprop ro.build.version.sdk); \
                      echo model=$(getprop ro.product.model)"
@@ -808,11 +828,11 @@ fn write_devinfo_cache(serial: &str, sdk: &str, model: &str) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn a_daemon_that_never_answers_names_the_jar_it_ran() {
-        let jar = std::path::Path::new("D:/other-checkout/build/mobax.jar");
+    fn a_daemon_that_never_answers_names_the_apk_it_ran() {
+        let jar = std::path::Path::new("D:/other-checkout/build/mobaxd.apk");
         let m = super::startup_failure(jar, "");
-        assert!(m.contains("D:/other-checkout/build/mobax.jar"), "{m}");
-        assert!(m.contains("MOBILEAX_JAR"), "{m}");
+        assert!(m.contains("D:/other-checkout/build/mobaxd.apk"), "{m}");
+        assert!(m.contains("MOBILEAX_APK"), "{m}");
         assert!(m.contains("logcat"), "{m}");
         let m = super::startup_failure(jar, "Exception in thread main\n");
         assert!(m.contains("Exception in thread main") && !m.contains("logcat"), "{m}");

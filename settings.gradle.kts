@@ -33,5 +33,5 @@ plugins {
 
 rootProject.name = "mobileax-daemon"
 
-include(":daemon:core", ":daemon:shell", ":daemon:instr")
+include(":daemon:core", ":daemon:app")
 include(":bench:toast-app")

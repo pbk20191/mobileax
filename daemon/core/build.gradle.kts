@@ -1,7 +1,7 @@
 /*
- * The daemon itself, shared by the two ways to start it: daemon/shell
- * (app_process, the shell uid) and daemon/instr (am instrument). Each sets
- * Host.current and calls serve().
+ * The daemon itself, shared by the two ways daemon/app starts it: Main
+ * (app_process, the shell uid) and MobaxInstrumentation (am instrument).
+ * Each sets Host.current and calls serve().
  */
 plugins {
     id("com.android.library")

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Wire-protocol smoke test for the on-device daemon.
 
-    wire-smoke.py run  --jar build/mobax.jar --out a.json [--serial S] [--port 9008]
+    wire-smoke.py run  --jar build/mobaxd.apk --out a.json [--serial S] [--port 9008]
     wire-smoke.py diff a.json b.json          # exit 1 on any difference
     wire-smoke.py threads [--serial S]        # thread names of the running mobaxd
     wire-smoke.py bench   [-n 100]            # p50/p95 ms for hot verbs
@@ -257,9 +257,9 @@ CASES = {
 def start_daemon(jar):
     adb("shell", "pkill -f mobaxd")
     time.sleep(0.3)
-    adb("push", jar, "/data/local/tmp/mobax.jar")
+    adb("push", jar, "/data/local/tmp/mobaxd.apk")
     adb("forward", f"tcp:{PORT}", f"localabstract:mobaxd_{PORT}")
-    adb("shell", f"CLASSPATH=/data/local/tmp/mobax.jar nohup app_process /system/bin --nice-name=mobaxd "
+    adb("shell", f"CLASSPATH=/data/local/tmp/mobaxd.apk nohup app_process /system/bin --nice-name=mobaxd "
                  f"dev.mobileax.daemon.Main --port={PORT} > /data/local/tmp/mobaxd.log 2>&1 &")
     t0 = time.time()
     while time.time() - t0 < 10:

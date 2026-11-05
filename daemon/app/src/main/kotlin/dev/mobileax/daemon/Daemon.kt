@@ -19,11 +19,16 @@ internal const val UA_FLAGS: Int = UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY
 
 internal val instr: Instrumentation get() = InstrumentationRegistry.getInstrumentation()
 
-/** The instrumentation: our own package (dev.mobileax.daemon), shell permissions adopted on top. */
+/**
+ * The instrumentation: this androidTest APK (dev.mobileax.daemon.instr)
+ * running in the process of the package it instruments (dev.mobileax.daemon),
+ * whose uid we are, shell permissions adopted on top. So the Context is the
+ * target's: its package matches our uid for binder calls and its files.
+ */
 internal object InstrHost : Host {
-    override val context: Context get() = instr.context
+    override val context: Context get() = instr.targetContext
     override val callerPackage: String get() = context.opPackageName
-    /** Installed as a package of its own: hidden from package lists. */
+    /** Installed as packages of their own: hidden from package lists. */
     override val selfPackage: String? get() = context.packageName
 
     /** A line for mobax.log through `am instrument`; stderr (logcat) before

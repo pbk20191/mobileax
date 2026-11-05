@@ -220,11 +220,12 @@ line per call.
 
 ```bash
 cargo build --release             # mobax and mobax-tui (add -p mobax-viewer for the viewer)
-./gradlew mobaxJar                # the daemon: build/mobax.jar
+./gradlew mobaxApk                # the daemon: build/mobaxd.apk, build/mobaxd-instr.apk
 ```
 
-The daemon is an unsigned release APK whose `classes.dex` R8 has shrunk with
-its runtime libraries; `app_process` accepts an APK on `CLASSPATH`. The SDK is
+The daemon is a release APK whose `classes.dex` R8 has shrunk with its
+runtime libraries; `app_process` accepts an APK on `CLASSPATH`, and the same
+APK is the package `mobaxd-instr.apk` (its androidTest APK) instruments. The SDK is
 found via `local.properties` (`sdk.dir`) or `ANDROID_HOME`, and the project
 imports into Android Studio for navigation.
 

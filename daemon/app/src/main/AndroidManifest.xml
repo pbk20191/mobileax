@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Installed and run via `am instrument`; there is no launchable component. -->
+<!-- Run by app_process (pushed, not installed) or installed as the package
+     its androidTest APK instruments; there is no launchable component. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Package visibility: adopted shell permissions don't widen what an
          app uid can see, and apps/links/pm/install must see every package. -->
@@ -7,7 +8,4 @@
     <!-- No icon in the launcher, so the label is how Settings › Apps names it:
          a stray copy (a host that never ran `mobax drop`) can be found and removed. -->
     <application android:hasCode="true" android:label="mobileAX daemon" />
-    <instrumentation
-        android:name="dev.mobileax.daemon.MobaxInstrumentation"
-        android:targetPackage="dev.mobileax.daemon" />
 </manifest>

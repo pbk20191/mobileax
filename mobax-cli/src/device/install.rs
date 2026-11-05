@@ -1,11 +1,17 @@
-// The daemon APK on a device: whether the installed one is ours, what
+// The daemon APKs on a device: whether the installed ones are ours, what
 // `pm install` said, and how the instrumentation is started.
 
-/// Where the APK is pushed before `pm install`.
+/// Where the daemon APK is pushed: app_process runs it from here, and
+/// `pm install` installs it from here.
 pub(crate) const DEVICE_APK: &str = "/data/local/tmp/mobaxd.apk";
-/// The [`fingerprint`] of the APK last installed, written after a successful install.
+/// Where its androidTest APK (the instrumentation) is pushed before `pm install`.
+pub(crate) const DEVICE_INSTR_APK: &str = "/data/local/tmp/mobaxd-instr.apk";
+/// The fingerprint of the APKs last installed, written after a successful install.
 pub(crate) const DEVICE_FP: &str = "/data/local/tmp/mobaxd.fp";
+/// The daemon APK's package: the instrumentation runs in its process.
 pub(crate) const PKG: &str = "dev.mobileax.daemon";
+/// The androidTest APK's package, which instruments [`PKG`].
+pub(crate) const INSTR_PKG: &str = "dev.mobileax.daemon.instr";
 
 /// FNV-1a 64 of the APK bytes, as 16 hex digits: enough to tell builds
 /// apart (same version string or not), no crypto needed.
@@ -44,8 +50,10 @@ pub(crate) fn instrumentation_ended(log: &str) -> bool {
 /// Starts the daemon detached; `am instrument -w` stays alive for its whole
 /// life (it holds the UiAutomation connection) and logs its status to `log`.
 pub(crate) fn instrument_cmd(port: u16, log: &str) -> String {
+    // The class by its full name: `.X` would be resolved in INSTR_PKG.
     format!(
-        "nohup am instrument -w --no-hidden-api-checks -e port {port} {PKG}/.MobaxInstrumentation > {log} 2>&1 &"
+        "nohup am instrument -w --no-hidden-api-checks -e port {port} \
+         {INSTR_PKG}/{PKG}.MobaxInstrumentation > {log} 2>&1 &"
     )
 }
 
@@ -77,7 +85,8 @@ mod tests {
     #[test]
     fn instrumentation_is_started_detached_with_the_port() {
         let c = super::instrument_cmd(9009, "/data/local/tmp/mobax.log");
-        assert!(c.starts_with("nohup am instrument -w --no-hidden-api-checks -e port 9009 dev.mobileax.daemon/.MobaxInstrumentation"));
+        assert!(c.starts_with("nohup am instrument -w --no-hidden-api-checks -e port 9009 \
+            dev.mobileax.daemon.instr/dev.mobileax.daemon.MobaxInstrumentation "), "{c}");
         assert!(c.ends_with("> /data/local/tmp/mobax.log 2>&1 &"));
     }
 }

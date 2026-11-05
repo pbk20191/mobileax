@@ -95,8 +95,9 @@ internal object ShellContexts {
 internal object ShellHost : Host {
     override val context: Context get() = ShellContexts.appContext()
     override val callerPackage: String = ShellContexts.SHELL_PACKAGE
-    /** Not installed as a package of its own: nothing to hide from package lists. */
-    override val selfPackage: String? = null
+    /** Pushed, not installed; but the same APK may be installed for `am
+     *  instrument` (an earlier session's): hidden from package lists. */
+    override val selfPackage: String? = "dev.mobileax.daemon"
     /** The host redirects stdout and stderr to /data/local/tmp/mobax.log. */
     override fun startupLine(line: String) = println(line)
     @Volatile private var standIn: Instrumentation? = null

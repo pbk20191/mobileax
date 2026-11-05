@@ -37,16 +37,16 @@ jobs:
         with:
           packages: 'platforms;android-36 build-tools;36.0.0'
 
-      # The APK is signed with the key committed in daemon/instr.
-      - name: Build mobax.jar and mobaxd.apk
-        run: ./gradlew --quiet mobaxJar mobaxApk
+      # Both APKs are signed with the key committed in daemon/app.
+      - name: Build mobaxd.apk and mobaxd-instr.apk
+        run: ./gradlew --quiet mobaxApk
 
       - uses: actions/upload-artifact@v4
         with:
           name: jar
           path: |
-            build/mobax.jar
             build/mobaxd.apk
+            build/mobaxd-instr.apk
           if-no-files-found: error
 
   # ─── Cross-build `mobax` (and `mobax-viewer` where it has a GPU backend) ─
@@ -146,7 +146,7 @@ jobs:
             cp "target/${{ matrix.target }}/release/mobax-viewer${{ matrix.exe }}" "$stage/"
           fi
           cp "target/${{ matrix.target }}/release/mobax-tui${{ matrix.exe }}" "$stage/"
-          cp build/mobax.jar build/mobaxd.apk "$stage/"
+          cp build/mobaxd.apk build/mobaxd-instr.apk "$stage/"
           [[ -f LICENSE ]] && cp LICENSE "$stage/" || true
           cp README.md "$stage/"
           echo "${{ steps.ver.outputs.tag }}" > "$stage/VERSION"
@@ -167,7 +167,7 @@ jobs:
             shasum -a 256 "$asset" > "$asset.sha256"
           fi
 
-      # MCP bundle: `mobax` + mobax.jar + mobaxd.apk run as `mobax mcp` (see mcpb/manifest.json),
+      # MCP bundle: `mobax` + mobaxd.apk + mobaxd-instr.apk run as `mobax mcp` (see mcpb/manifest.json),
       # one per platform since the bundle carries a native binary.
       - uses: actions/setup-node@v4
         with:
@@ -177,7 +177,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node scripts/mcpb-stage.mjs             --version "${{ steps.ver.outputs.tag }}"             --platform "${{ matrix.mcpb }}"             --cli "target/${{ matrix.target }}/release/mobax${{ matrix.exe }}"             --jar build/mobax.jar --apk build/mobaxd.apk             --out dist/mcpb
+          node scripts/mcpb-stage.mjs             --version "${{ steps.ver.outputs.tag }}"             --platform "${{ matrix.mcpb }}"             --cli "target/${{ matrix.target }}/release/mobax${{ matrix.exe }}"             --apk build/mobaxd.apk --instr-apk build/mobaxd-instr.apk             --out dist/mcpb
           npx -y @anthropic-ai/mcpb@2.1.2 validate dist/mcpb/manifest.json
           bundle="mobileax-${{ matrix.name }}.mcpb"
           npx -y @anthropic-ai/mcpb@2.1.2 pack dist/mcpb "$bundle"

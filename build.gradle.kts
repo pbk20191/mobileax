@@ -1,14 +1,15 @@
 /*
- * Build for the on-device daemon, three modules under daemon/:
+ * Build for the on-device daemon, two modules under daemon/:
  *
- *  - core:  the daemon itself (a library)
- *  - shell: started by app_process as the shell uid → build/mobax.jar
- *  - instr: installed and run by `am instrument` → build/mobaxd.apk
+ *  - core: the daemon itself (a library)
+ *  - app:  its APK → build/mobaxd.apk, run by app_process as the shell
+ *          uid; and the androidTest APK that instruments it →
+ *          build/mobaxd-instr.apk, for `am instrument`
  *
  * Not a launchable app either way. AGP handles the SDK (platform +
  * build-tools, downloaded if missing), Kotlin, and R8.
  *
- *   ./gradlew mobaxJar mobaxApk              build both
+ *   ./gradlew mobaxApk                       build both APKs
  *   ./gradlew benchToastApk                  the agent benchmark's toast app
  */
 
@@ -26,11 +27,24 @@ fun copyApk(name: String, module: String, out: String, what: String) = tasks.reg
     into(layout.projectDirectory.dir("build"))
 }
 
-val mobaxJar = copyApk("mobaxJar", ":daemon:shell", "mobax.jar", "Builds build/mobax.jar for app_process.")
-val mobaxApk = copyApk("mobaxApk", ":daemon:instr", "mobaxd.apk", "Builds build/mobaxd.apk for am instrument.")
+val mobaxApk = tasks.register<Copy>("mobaxApk") {
+    group = "build"
+    description = "Builds build/mobaxd.apk (app_process, and the instrumented package) and build/mobaxd-instr.apk (am instrument)."
+    val app = project(":daemon:app")
+    dependsOn(":daemon:app:assembleRelease", ":daemon:app:assembleReleaseAndroidTest")
+    from(app.layout.buildDirectory.dir("outputs/apk/release")) {
+        include("*.apk")
+        rename { "mobaxd.apk" }
+    }
+    from(app.layout.buildDirectory.dir("outputs/apk/androidTest/release")) {
+        include("*.apk")
+        rename { "mobaxd-instr.apk" }
+    }
+    into(layout.projectDirectory.dir("build"))
+}
 copyApk("benchToastApk", ":bench:toast-app", "bench-toast.apk", "Builds build/bench-toast.apk for the agent benchmark (s6).")
 
 tasks.register("assemble") {
     group = "build"
-    dependsOn(mobaxJar, mobaxApk)
+    dependsOn(mobaxApk)
 }

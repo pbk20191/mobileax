@@ -16,23 +16,29 @@ mobax <verb> ──► adb server ─────►     MobaxServer → Dispatc
 The daemon runs as the shell UID via `app_process` with hidden-API
 restrictions lifted.
 
-There is a second build of the same daemon, and `mobax use` prefers it where
-`mobaxd.apk` sits next to the jar and the device runs Android 10+: an
-installed APK (`dev.mobileax.daemon`) run as an instrumentation. If it can't
-be installed (no "Install via USB") or doesn't start, `use` falls back to the
-jar; `use --instr|--jar` (or `MOBAX_DAEMON=instr|jar`) picks one. `use`
-installs it when the device's copy isn't this build and starts `am instrument -w --no-hidden-api-checks …
-/.MobaxInstrumentation`. UiAutomation comes from the framework (shared with
+The same APK (`mobaxd.apk`) also runs a second way, and `mobax use` prefers
+it where `mobaxd-instr.apk` sits next to it and the device runs Android 10+:
+installed (`dev.mobileax.daemon`) and instrumented by its androidTest APK
+(`dev.mobileax.daemon.instr`). If they can't be installed (no "Install via
+USB") or the daemon doesn't start, `use` falls back to app_process ("the
+jar"); `use --instr|--jar` (or `MOBAX_DAEMON=instr|jar`) picks one. `use`
+installs both when the device's copies aren't this build and starts `am
+instrument -w --no-hidden-api-checks … dev.mobileax.daemon.instr/
+dev.mobileax.daemon.MobaxInstrumentation`; the daemon runs in the
+`dev.mobileax.daemon` process. UiAutomation comes from the framework (shared with
 UiAutomator's `UiDevice`), shell permissions are adopted
 (`adoptShellPermissionIdentity`), and what needs the shell uid itself
 (dumpsys, settings, logcat, `cp`) runs through a framework-started `sh`. It
-exits when its `am instrument` process goes. Three Gradle modules:
-`daemon/core` is the daemon (a library), `daemon/shell` the app_process
-entry point and context setup (`build/mobax.jar`), `daemon/instr` the
-instrumentation's (`build/mobaxd.apk`). Each entry point sets
-`Host.current` (its Context, calling package, startup log and shell) and
-calls `serve()`. The shell is where they differ most: the jar spawns
-`sh -c` as its own child, the APK goes through UiAutomation.
+exits when its `am instrument` process goes. Two Gradle modules:
+`daemon/core` is the daemon (a library), `daemon/app` its APK with both
+entry points: `Main` for app_process (`ShellHost`), and for `am instrument`
+`InstrEntry.kt` (`InstrHost`), which the androidTest APK's only class,
+`MobaxInstrumentation`, calls. R8 shrinks the daemon APK without seeing the
+androidTest APK, so `daemon/app/proguard-rules.pro` keeps exactly what that
+class uses. Each entry point sets `Host.current` (its Context, calling
+package, startup log and shell) and calls `serve()`. The shell is where
+they differ most: app_process spawns `sh -c` as its own child, the
+instrumentation goes through UiAutomation.
 
 On a physical device either build leaves once no client has been connected
 for 30 s (`Lease`), so unplugging the cable or quitting the host frees the
@@ -87,8 +93,8 @@ every verb so two daemon builds can be compared on a device.
 
 ```
 daemon/core/                  on-device daemon (Kotlin library)
-daemon/shell/, daemon/instr/  its app_process and am-instrument entry points
+daemon/app/                   its APK (app_process and am-instrument entry points) and androidTest APK
 mobax-cli/                 host CLI — short-verb surface (`mobax use`, `mobax see`, …)
 mobax-viewer/              GUI mirror — winit + GPU decode (Metal/VideoToolbox, D3D11/MF, GLES/VA-API)
-build.gradle.kts              AGP: kotlinc → R8 → build/mobax.jar, build/mobaxd.apk  (build.sh wraps it)
+build.gradle.kts              AGP: kotlinc → R8 → build/mobaxd.apk, build/mobaxd-instr.apk  (build.sh wraps it)
 ```
