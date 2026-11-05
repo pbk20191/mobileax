@@ -35,8 +35,7 @@ jobs:
         with:
           packages: 'platforms;android-36 build-tools;36.0.0'
 
-      # The APK is signed with this runner's debug key; `mobax use` replaces
-      # a device copy signed by another one.
+      # Signed with the key committed in daemon/instr (every build shares it).
       - name: Build mobax.jar and mobaxd.apk
         run: ./gradlew --quiet mobaxJar mobaxApk
 

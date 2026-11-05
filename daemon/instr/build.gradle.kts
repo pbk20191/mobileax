@@ -18,15 +18,30 @@ android {
         targetSdk = 36
     }
 
+    // One key for every build, committed with its password, as Appium does
+    // for its UiAutomator2 server: the signature proves nothing (installing
+    // takes adb anyway), it only has to stay the same, so a device keeps
+    // its copy across this machine's, another's and CI's builds instead of
+    // `mobax use` uninstalling it for a different debug key.
+    signingConfigs {
+        create("mobaxd") {
+            storeFile = file("mobaxd.p12")
+            storeType = "PKCS12"
+            storePassword = "mobileax"
+            keyAlias = "mobaxd"
+            keyPassword = "mobileax"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("mobaxd")
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles("../core/proguard-rules.pro", "proguard-rules.pro")
-            // Installing needs a signature, not a trusted one: the debug key
-            // (generated per machine/CI runner). A device holding another
-            // build's signature gets it uninstalled and reinstalled by `mobax use`.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("mobaxd")
             vcsInfo.include = false
         }
     }

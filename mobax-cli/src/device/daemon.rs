@@ -519,7 +519,7 @@ fn stop_daemon(serial: &str) -> io::Result<()> {
 }
 
 /// Installs the APK unless the device already has this build. A copy signed
-/// by another key (another machine's or CI's debug key) is replaced.
+/// by another key (a build from before the committed key) is replaced.
 fn ensure_installed(serial: &str, apk: &Path, fp: &str) -> io::Result<()> {
     let have = device_sh(serial, &format!("pm path {PKG} >/dev/null && cat {DEVICE_FP} 2>/dev/null"));
     if have.trim() == fp { return Ok(()); }

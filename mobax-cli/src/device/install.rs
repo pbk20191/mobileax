@@ -20,7 +20,7 @@ pub(crate) fn fingerprint(bytes: &[u8]) -> String {
 
 pub(crate) enum InstallOutcome {
     Ok,
-    /// Installed under another key (another machine's or CI's debug key).
+    /// Installed under another key (a build from before the committed key).
     SignatureMismatch,
     Failed(String),
 }
