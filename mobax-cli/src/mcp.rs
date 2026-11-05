@@ -51,9 +51,8 @@ to connect and start the on-device daemon.\n\
 `ui` lists the screen as rows numbered @1, @2, …: verb (tap / fill / - for text), \
 class, label, #resource-id, centre x,y and state. Act on a row by its ref \
 (tap target \"@3\", fill selector \"@5\"), or by text, #resource_id or a CSS-like \
-selector ('Button[text=\"OK\"]'). `by:` targets match live on the device \
-(UiAutomator By): text= desc= res= class= pkg= (~= contains, ^= $= =/re/i), \
-clickable !enabled, has() in() window(pkg= type=ime).\n\
+selector ('Button[text=\"OK\"]'). On-device: `by:` (UiAutomator By) text= desc= res= class= pkg= (~= contains, ^= $= =/re/i), \
+clickable !enabled, has() in() window(pkg= type=ime). `xpath:`: Appium XPath.\n\
 \n\
 `tap`, `fill`, `type`, `swipe`, `go` and `open` wait for the screen to settle and \
 reply with what changed: + added, ~ changed and - removed rows, or the whole new \

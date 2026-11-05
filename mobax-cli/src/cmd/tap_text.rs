@@ -72,7 +72,14 @@ pub fn run_session(
             sess.invalidate_dump();
         }
         attempt += 1;
-        let hits = match sess.with_dump(|tree| {
+        // `xpath:` runs on the device; its nodes come back as the dump has them.
+        let hits = if let Some(xp) = query.strip_prefix("xpath:") {
+            let body = sess.conn.call(&format!("xpath_find q={xp}"))?;
+            if let Some(e) = parse_err(&body) {
+                return Err(reporter.fail(verb, e));
+            }
+            xpath_hits(&body, &flags)?
+        } else { match sess.with_dump(|tree| {
             // The app's windows, so a dialog or popup over the activity
             // is searched too (and wins ties — see find_in).
             let roots = crate::json::app_roots(tree);
@@ -93,7 +100,7 @@ pub fn run_session(
                 if let Some(info) = io_err_to_info(&e) { last_err = Some(info); continue; }
                 return Err(e);
             }
-        };
+        } };
         match candidate(&hits, &flags) {
             // Off screen: its bounds are cut at one edge (even inverted), so
             // their centre can land on something else. Scroll toward it.
@@ -658,6 +665,18 @@ mod tests {
         assert_eq!(hits[0].text, "闲鱼");
         assert_eq!(hits[0].bounds, (400, 1500, 600, 1700));
     }
+}
+
+/// The nodes `xpath_find` sent back, in document order (the window on top
+/// first), as tap candidates.
+fn xpath_hits(body: &[u8], flags: &crate::flags::ActionFlags) -> io::Result<Vec<Hit>> {
+    let text = std::str::from_utf8(body).map_err(|e| io::Error::other(format!("xpath_find: {e}")))?;
+    let json = crate::json::parse(text).map_err(|e| io::Error::other(format!("xpath_find: {e}")))?;
+    if obj_get(&json, "value").is_some() {
+        return Err(io::Error::other("tap: that XPath gives a value, not nodes"));
+    }
+    Ok(obj_get(&json, "nodes").and_then(crate::json::as_arr).map(|a| a.iter().filter_map(|n| id_hit(n, flags)).collect())
+        .unwrap_or_default())
 }
 
 /// `tap by:QUERY`: the device finds the node with UiAutomator's By, live,

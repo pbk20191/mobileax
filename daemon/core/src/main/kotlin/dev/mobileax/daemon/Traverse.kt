@@ -64,6 +64,11 @@ object Traverse {
         writeFields(n, out, null, shown)
     }
 
+    /** One node's fields as [writeNode] writes them under [clip] (`off` included), in an object left open. */
+    fun writeFieldsClipped(n: AccessibilityNodeInfo, out: JsonOut, clip: Rect?) {
+        writeFields(n, out, clip)
+    }
+
     /**
      * Opens the node's object and writes its own fields (not children).
      * Returns the part of it that shows through [clip] (null: none).

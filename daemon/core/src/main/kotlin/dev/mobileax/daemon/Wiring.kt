@@ -31,6 +31,7 @@ internal suspend fun buildServer(context: Context, ua: UiAutomation): Server {
     h.wm = Wm(context.getSystemService(DisplayManager::class.java), ua)
     h.uiEvents = UiEvents(ua)
     h.by = ByEngine(ua, context, h.uiEvents)
+    h.xpath = XPathEngine(ua, h.uiEvents)
     h.nodes = NodeActions(ua, h.by)
     h.toasts = Toasts(h.uiEvents)
     h.state = State(context, h.uiEvents)

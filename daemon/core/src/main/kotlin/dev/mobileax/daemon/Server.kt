@@ -10,6 +10,7 @@ internal class Server(private val h: Handlers) {
         lateinit var ctx: Context
         lateinit var dumper: Dumper
         lateinit var by: ByEngine
+        lateinit var xpath: XPathEngine
         lateinit var shot: Screenshot
         lateinit var input: Input
         lateinit var installer: Installer
@@ -40,6 +41,7 @@ internal class Server(private val h: Handlers) {
      */
     fun respond(head: String, cmd: String): ByteArray? {
         h.by.handle(head, cmd)?.let { return it }
+        h.xpath.handle(head, cmd)?.let { return it }
         when (head) {
             "info" -> return utf8(h.shot.sourceSize().x.toString() + " " + h.shot.sourceSize().y)
             "pm_list" -> return runPmList(cmd)

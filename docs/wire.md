@@ -183,6 +183,31 @@ focused display=N)`. A value with spaces goes in `"quotes"`. `dir` on
 `by_swipe` is the finger's: a scrollable element scrolls (the content moves
 the other way) and says `end` when nothing is left.
 
+## XPath queries — Appium's document, on the device
+
+`xpath:` queries (`XPathEngine`) build the screen as Appium's UiAutomator2
+server shows it — elements named after the class under `hierarchy`, with
+`index package class text resource-id checkable checked clickable enabled
+focusable focused long-clickable password scrollable selected displayed
+content-desc bounds` (plus `hint`, `state-description`) — and evaluate the
+XPath there, so Appium Inspector's XPaths work. `bounds` are the visible
+ones; a node nothing of which shows has `off`. A Compose testTag is the
+`resource-id` when there is none. XPath 1.0 (Android's engine) plus
+`matches(s, re[, flags])`, `lower-case`, `upper-case`, `ends-with`. Class
+names that aren't XML names get `_` for the offending characters (`@class`
+is exact). The CLI and MCP route `xpath:` targets for find, wait and tap
+here; tap scrolls toward an `off` node as it does for any other.
+
+```
+xpath_find [scope=app|all] q=XPATH                       → {"nodes":[…],"ms":N,"build_ms":N}
+                                                           | {"value":"…"} (count(), string(), …)
+xpath_wait [scope=app|all] [timeout_ms=N] [gone=1] q=XPATH → ok x= y= elapsed= | ERR:TIMEOUT
+```
+
+`scope=app` (default): the app's windows, the one on top first; `all`:
+every window. `xpath_wait` rechecks on accessibility events and ignores
+nodes marked `off`.
+
 ## Packages
 
 ```

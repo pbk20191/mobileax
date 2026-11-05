@@ -139,11 +139,13 @@ pub(crate) fn run_wait(
             json_out::Obj::new().n("slept_ms", ms as i64));
     }
     let timeout_ms = f.timeout_ms.unwrap_or(10_000);
-    let by = spec.starts_with("by:");
+    let by = spec.starts_with("by:") || spec.starts_with("xpath:");
     if let Some(sels) = css_selector(spec).filter(|_| !by) {
         return run_wait_selector(conn, &reporter, spec, &sels, f, timeout_ms);
     }
-    let wire: String = if by {
+    let wire: String = if let Some(xp) = spec.strip_prefix("xpath:") {
+        format!("xpath_wait timeout_ms={timeout_ms} q={xp}")
+    } else if by {
         format!("by_wait timeout_ms={timeout_ms} q={spec}")
     } else if let Some(rest) = spec.strip_prefix("idle") {
         let rest = rest.trim();
@@ -239,9 +241,10 @@ pub(crate) fn run_find(
     f: &flags::ActionFlags,
 ) -> io::Result<()> {
     let reporter = output::Reporter::new(f.out(out_fmt));
-    // `by:` runs UiAutomator's By on the device, live; anything else matches
-    // a dump here.
-    let by = sel.starts_with("by:");
+    // `by:` runs UiAutomator's By on the device, live, and `xpath:` an XPath
+    // over the screen there; anything else matches a dump here.
+    let xpath = sel.strip_prefix("xpath:");
+    let by = sel.starts_with("by:") || xpath.is_some();
     let selectors = if by { Vec::new() } else {
         match selector::Selector::parse(sel) {
             Ok(s) => s,
@@ -249,7 +252,11 @@ pub(crate) fn run_find(
                 errors::ErrInfo::new(errors::ErrCode::BadArg, e))),
         }
     };
-    let wire = if by { format!("by_find q={sel}") } else { f.dump_wire().to_string() };
+    let wire = match xpath {
+        Some(xp) => format!("xpath_find q={xp}"),
+        None if by => format!("by_find q={sel}"),
+        None => f.dump_wire().to_string(),
+    };
     let body = conn.call(&wire)?;
     if let Some(e) = errors::parse_err(&body) {
         return Err(reporter.fail("find", e));
@@ -258,6 +265,10 @@ pub(crate) fn run_find(
         .map_err(|e| io::Error::other(format!("dump not utf-8: {e}")))?;
     let json = json::parse(text)
         .map_err(|e| io::Error::other(format!("dump not json: {e}")))?;
+    // count(…), string(…): an XPath that evaluates to a value.
+    if let Some(v) = json::obj_get(&json, "value").and_then(json::as_str) {
+        return reporter.ok("find", v, json_out::Obj::new().s("value", v));
+    }
     let mut matches = if by {
         json::obj_get(&json, "nodes").and_then(json::as_arr).map(|a| a.iter().collect()).unwrap_or_default()
     } else {
