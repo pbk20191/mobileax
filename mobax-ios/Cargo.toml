@@ -1,0 +1,22 @@
+[package]
+name = "mobax-ios"
+version.workspace = true
+edition.workspace = true
+description = "mobileAX for iPhone: screenshots, syslog and the accessibility inspector over usbmuxd (experimental)"
+
+[[bin]]
+name = "mobax-ios"
+path = "src/main.rs"
+
+# Kept out of the mobax CLI, which is pure std: idevice brings tokio and rustls.
+[dependencies]
+idevice = { version = "=0.1.68", default-features = false, features = [
+  "ring",
+  "usbmuxd",
+  "screenshotr",
+  "syslog_relay",
+  "dvt",
+] }
+tokio = { version = "1", features = ["rt", "macros", "time"] }
+plist = "1.8"
+ns-keyed-archive = "0.1.5"
