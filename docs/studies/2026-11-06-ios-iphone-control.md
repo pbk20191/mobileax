@@ -47,6 +47,15 @@
 - `scripts/ios-wda-sign.sh`가 그 과정을 담는다: 번들 ID 변경, 프로파일 포함, 키체인 인증서로 서명.
   - 와일드카드 팀 프로파일로 서명과 `codesign --verify --deep --strict`까지 통과했다.
   - 설치와 실행은 기기 연결이 끊겨 확인하지 못했다.
+- 2026-10 이후 WDA는 `appium/appium-ios` 모노레포(`packages/webdriveragent`)로 옮겨졌다. 옛 저장소의 마지막 릴리스는 v16.15.3이고, 새 릴리스는 `appium-webdriveragent@X.Y.Z` 태그로 같은 zip들을 단다. 스크립트는 `scripts/ios-wda-tag.sh`로 태그를 골라 모노레포에서 받는다.
+  - 시뮬레이터 빌드 16.17.11로 `wda`, `ui`, `tap`, MCP `ui`/`go back`이 그대로 동작했다.
+- 무료 Apple ID는 개발자 포털에서 프로파일을 받을 수 없다. Xcode가 빌드하면서 만들어 주는 것이 유일한 길이라 `--xcode` 모드를 두었다.
+  - 같은 릴리스의 소스를 받아 `xcodebuild build-for-testing -allowProvisioningUpdates -allowProvisioningDeviceRegistration`으로 빌드한다. 연결된 iPhone(`--udid`)을 Xcode가 등록하고 프로파일을 만든다.
+  - 팀 ID는 Apple Development 인증서의 OU에서 읽는다. 팀이 여럿이면 `--team`을 받는다.
+  - 번들 ID는 전 세계에서 겹치면 안 되므로 기본값에 팀 ID를 넣는다(`com.mobileax.<team>.WebDriverAgentRunner`).
+  - 무료 계정 제약: 프로파일 7일, 기기 3대, 주당 App ID 10개. 만료되면 다시 실행한다.
+  - 모노레포 tarball에서 `packages/webdriveragent`만 풀어 쓴다.
+  - 서명 없이(`CODE_SIGNING_ALLOWED=NO`) Xcode 27에서 옛 저장소 v16.15.3 소스가 20초에 빌드되고 러너 번들 ID가 `<id>.xctrunner`로 나오는 것까지 확인했다. 프로비저닝은 기기가 없어 확인하지 못했다.
 - Windows에서는 `ios ui install wda --p12file … --profile … --path <공식 zip>`으로 서명한다. `.p12`를 한 번 내보내야 한다.
 
 ## 목표

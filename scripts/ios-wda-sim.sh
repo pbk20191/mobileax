@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Fetches Appium's prebuilt WebDriverAgent for the iOS Simulator, on a Mac.
 #
-#   scripts/ios-wda-sim.sh [--version vX.Y.Z] [--out DIR]
+#   scripts/ios-wda-sim.sh [--version X.Y.Z] [--out DIR]
 #
-# The simulator build (github.com/appium/WebDriverAgent releases,
-# WebDriverAgentRunner-Build-Sim-<arch>.zip) embeds XCTest, so it needs no
-# signing and starts with `simctl launch`:
+# The simulator build (github.com/appium/appium-ios releases tagged
+# appium-webdriveragent@X.Y.Z, WebDriverAgentRunner-Build-Sim-<arch>.zip)
+# embeds XCTest, so it needs no signing and starts with `simctl launch`:
 #   mobax-ios --sim wda --app DIR/WebDriverAgentRunner-Runner.app
 set -euo pipefail
 
@@ -23,8 +23,9 @@ case "$(uname -m)" in
   x86_64) arch=x86_64 ;;
   *) echo "unsupported host $(uname -m)" >&2; exit 1 ;;
 esac
+tag=$("$(dirname "$0")/ios-wda-tag.sh" "$version")
 rm -rf "$out" && mkdir -p "$out"
-gh release download ${version:+"$version"} -R appium/WebDriverAgent \
+gh release download "$tag" -R appium/appium-ios \
   -p "WebDriverAgentRunner-Build-Sim-$arch.zip" -D "$out"
 unzip -q "$out/WebDriverAgentRunner-Build-Sim-$arch.zip" -d "$out"
 echo "$out/WebDriverAgentRunner-Runner.app"
