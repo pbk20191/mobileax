@@ -39,13 +39,21 @@ pub struct Ref {
     pub sel: String,
 }
 
+impl Ref {
+    /// The line without its position: what the row says, not where it is.
+    fn body(&self) -> String {
+        let at = if self.x < 0 { "  ?,?".to_string() } else { format!("  {},{}", self.x, self.y) };
+        self.line.replacen(&at, "", 1)
+    }
+}
+
 /// How a screen differs from the one before it.
 pub enum Change {
     /// Another screen, or so much changed that the full table is clearer.
     New,
     /// Nothing visible changed.
     Same,
-    /// `+` added, `~` changed, `-` removed rows.
+    /// `+` added, `~` changed, `-` removed rows, then how many only moved.
     Rows(Vec<String>),
 }
 
@@ -55,6 +63,15 @@ impl Screen {
     pub fn from_dump(dump: &Value, prev: Option<&Screen>) -> Screen {
         let (key, pkg) = identity(dump);
         let rows = ui_dump::interactive_rows(&json::app_roots(dump));
+        let keyboard = json::obj_get(dump, "windows").and_then(json::as_arr).unwrap_or(&[]).iter()
+            .any(|w| json::obj_get(w, "type").and_then(json::as_num) == Some(TYPE_INPUT_METHOD));
+        Screen::from_rows(key, pkg, keyboard, rows, prev)
+    }
+
+    /// The screen made of `rows`, for a platform that builds its own (iOS).
+    /// `key` names the screen (a different key restarts numbering); `pkg` is
+    /// what the reply calls it.
+    pub fn from_rows(key: String, pkg: String, keyboard: bool, rows: Vec<ui_dump::UiRow>, prev: Option<&Screen>) -> Screen {
         let same = prev.filter(|p| p.key == key);
         let old: HashMap<&str, u32> = same
             .map(|p| p.rows.iter().map(|r| (r.ident.as_str(), r.n)).collect())
@@ -76,8 +93,6 @@ impl Screen {
             };
             out.push(Ref { n, ident, line: r.line, x: r.x, y: r.y, bounds: r.bounds, sel: r.sel });
         }
-        let keyboard = json::obj_get(dump, "windows").and_then(json::as_arr).unwrap_or(&[]).iter()
-            .any(|w| json::obj_get(w, "type").and_then(json::as_num) == Some(TYPE_INPUT_METHOD));
         Screen { key, pkg, keyboard, rows: out, next }
     }
 
@@ -187,10 +202,19 @@ impl Screen {
         let w = self.ref_width().max(prev.ref_width());
         let tag = |n: u32| format!("{:<w$}", format!("@{n}"));
         let mut lines = Vec::new();
+        // A row that only moved (a row slid in above it, the list scrolled)
+        // is counted, not listed: its ref still finds it where it is now.
+        let mut moved = 0;
         for r in &self.rows {
             match before.get(r.ident.as_str()) {
                 None => lines.push(format!("+ {}  {}", tag(r.n), r.line)),
-                Some(p) if p.line != r.line => lines.push(format!("~ {}  {}", tag(r.n), r.line)),
+                Some(p) if p.line != r.line => {
+                    if p.body() == r.body() {
+                        moved += 1;
+                    } else {
+                        lines.push(format!("~ {}  {}", tag(r.n), r.line));
+                    }
+                }
                 _ => {}
             }
         }
@@ -199,10 +223,15 @@ impl Screen {
                 lines.push(format!("- {}  {}", tag(p.n), p.line));
             }
         }
+        if lines.len() > (self.rows.len() / 2).max(8) {
+            return Change::New;
+        }
+        if moved > 0 {
+            let s = if moved == 1 { "" } else { "s" };
+            lines.push(format!("↕ {moved} row{s} moved (refs unchanged)"));
+        }
         if lines.is_empty() {
             Change::Same
-        } else if lines.len() > (self.rows.len() / 2).max(8) {
-            Change::New
         } else {
             Change::Rows(lines)
         }
@@ -298,8 +327,9 @@ mod tests {
         let Change::Rows(lines) = b.change_from(Some(&a)) else { panic!("expected row changes") };
         assert_eq!(lines.len(), 3, "{lines:?}");
         assert!(lines.iter().any(|l| l.starts_with("+ @3") && l.contains("Retry")), "{lines:?}");
-        assert!(lines.iter().any(|l| l.starts_with("~ @2") && l.contains("Cancel")), "{lines:?}");
         assert!(lines.iter().any(|l| l.starts_with("- @1") && l.contains("OK")), "{lines:?}");
+        // Cancel only moved: counted, not listed.
+        assert_eq!(lines.last().map(String::as_str), Some("↕ 1 row moved (refs unchanged)"), "{lines:?}");
     }
 
     #[test]
@@ -322,6 +352,26 @@ mod tests {
         let Change::Rows(lines) = b.change_from(Some(&a)) else { panic!("expected a changed row") };
         assert_eq!(lines.len(), 1, "{lines:?}");
         assert!(lines[0].starts_with("~ @1") && lines[0].contains("battery"), "{lines:?}");
+    }
+
+    /// A row slid in at the top: the rows under it only moved, so the reply
+    /// is that row and a count, not the whole table again.
+    #[test]
+    fn rows_that_only_moved_are_counted_not_listed() {
+        let names = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"];
+        let list = |top: &[(&str, i64)]| {
+            let mut all: Vec<(&str, i64)> = top.to_vec();
+            let off = top.len() as i64 * 100;
+            all.extend(names.iter().enumerate().map(|(i, n)| (*n, 100 + off + i as i64 * 100)));
+            dump(1, &all)
+        };
+        let a = Screen::from_dump(&list(&[]), None);
+        let b = Screen::from_dump(&list(&[("Banner", 100)]), Some(&a));
+        let Change::Rows(lines) = b.change_from(Some(&a)) else { panic!("expected row changes") };
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(lines[0].starts_with("+ ") && lines[0].contains("Banner"), "{lines:?}");
+        assert_eq!(lines[1], "↕ 10 rows moved (refs unchanged)");
+        assert_eq!(b.get(1).unwrap().y, 225, "a ref resolves to where its row is now");
     }
 
     #[test]

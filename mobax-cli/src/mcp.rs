@@ -56,9 +56,9 @@ selector ('Button[text=\"OK\"]'). `by:` targets match live on the device \
 clickable !enabled, has() in() window(pkg= type=ime).\n\
 \n\
 `tap`, `fill`, `type`, `swipe`, `go` and `open` wait for the screen to settle and \
-reply with what changed: + added, ~ changed and - removed rows, or the whole new \
-screen. You rarely need `ui` after an action. A ref stays valid until a reply \
-shows a new screen.\n\
+reply with what changed: + added, ~ changed, - removed, ↕ moved rows; or the \
+whole new screen. You rarely need `ui` after an action. A ref stays \
+valid until a reply shows a new screen.\n\
 \n\
 Every tool takes an optional `device` (adb serial; default: the one `use` \
 connected). `observe: false` skips an action's settle and reply. \
