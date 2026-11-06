@@ -28,6 +28,17 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$identity" ] && [ -n "$profile" ] || { sed -n '2,16p' "$0"; exit 2; }
 
+# codesign takes any identity whose name merely contains the string, so check
+# for an exact SHA-1 or name first.
+security find-identity -v -p codesigning | awk -v want="$identity" '
+  { name = $0; sub(/^[^"]*"/, "", name); sub(/"[^"]*$/, "", name)
+    if ($2 == want || name == want) found = 1 }
+  END { exit !found }' || {
+  echo "no codesigning identity is exactly \"$identity\"; these are:" >&2
+  security find-identity -v -p codesigning >&2
+  exit 1
+}
+
 decoded=$(mktemp)
 trap 'rm -f "$decoded"' EXIT
 security cms -D -i "$profile" > "$decoded"

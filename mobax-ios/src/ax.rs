@@ -8,22 +8,18 @@
 //! screen costs one round trip per element (~30 ms each on an iPhone 11).
 //!
 //! Every argument is NSKeyedArchived into the DTX aux section; replies come
-//! back as archived payloads. Device-to-host calls arrive on the root channel
-//! in between replies, so [Ax] keeps them aside until asked for.
+//! back as archived payloads. Focus reports are device-to-host calls on the
+//! root channel; [Dtx] acknowledges them and keeps them until asked for.
 
-use std::{collections::VecDeque, time::Duration};
+use std::time::Duration;
 
-use idevice::{
-    dvt::{
-        message::{AuxValue, Message},
-        remote_server::RemoteServerClient,
-    },
-    provider::IdeviceProvider,
-    IdeviceError, ReadWrite,
-};
+use idevice::provider::IdeviceProvider;
 use plist::Value;
 
-use crate::archive::{archive, dig, unarchive, unwrap, Arch};
+use crate::{
+    archive::{dig, unwrap, Arch},
+    dtx::{Dtx, Error},
+};
 
 const SERVICE: &str = "com.apple.accessibility.axAuditDaemon.remoteserver";
 const FOCUS_CHANGED: &str = "hostInspectorCurrentElementChanged:";
@@ -72,21 +68,25 @@ impl Element {
 }
 
 pub struct Ax {
-    rs: RemoteServerClient<Box<dyn ReadWrite>>,
-    /// Device-to-host calls read while waiting for a reply.
-    incoming: VecDeque<Message>,
+    dtx: Dtx,
 }
 
 impl Ax {
     /// Opens the service and runs the same setup handshake as Xcode (and go-ios):
     /// without it the device never reports focus changes.
-    pub async fn connect(provider: &dyn IdeviceProvider) -> Result<Self, IdeviceError> {
-        let socket = crate::device::start_service(provider, SERVICE).await?;
+    pub async fn connect(provider: &dyn IdeviceProvider) -> Result<Self, String> {
+        let socket = crate::device::start_service(provider, SERVICE)
+            .await
+            .map_err(|e| format!("{SERVICE}: {e}"))?;
         let mut ax = Ax {
-            rs: RemoteServerClient::new(socket),
-            incoming: VecDeque::new(),
+            dtx: Dtx::new(socket, REPLY_TIMEOUT),
         };
-        ax.send(
+        ax.handshake().await.map_err(|e| e.to_string())?;
+        Ok(ax)
+    }
+
+    async fn handshake(&mut self) -> Result<(), Error> {
+        self.send(
             "_notifyOfPublishedCapabilities:",
             vec![Arch::dict([
                 ("com.apple.private.DTXBlockCompression", Arch::Int(2)),
@@ -94,8 +94,8 @@ impl Ax {
             ])],
         )
         .await?;
-        ax.call("deviceCapabilities", vec![]).await?;
-        let api = ax
+        self.call("deviceCapabilities", vec![]).await?;
+        let api = self
             .call("deviceApiVersion", vec![])
             .await?
             .and_then(|v| v.as_unsigned_integer())
@@ -106,19 +106,18 @@ impl Ax {
         } else {
             "deviceAllAuditCaseIDs"
         };
-        ax.call(audit_types, vec![]).await?;
-        ax.call("deviceInspectorSupportedEventTypes", vec![])
+        self.call(audit_types, vec![]).await?;
+        self.call("deviceInspectorSupportedEventTypes", vec![])
             .await?;
-        ax.call("deviceInspectorCanNavWhileMonitoringEvents", vec![])
+        self.call("deviceInspectorCanNavWhileMonitoringEvents", vec![])
             .await?;
-        ax.send("deviceSetAppMonitoringEnabled:", vec![Arch::Bool(true)])
-            .await?;
-        Ok(ax)
+        self.send("deviceSetAppMonitoringEnabled:", vec![Arch::Bool(true)])
+            .await
     }
 
     /// Points the inspector at the device (rather than one process) and turns
     /// on selection mode, so moves report elements. Returns the element it starts on.
-    pub async fn start(&mut self) -> Result<Option<Element>, IdeviceError> {
+    pub async fn start(&mut self) -> Result<Option<Element>, Error> {
         self.turn_off().await?;
         self.call("deviceAccessibilitySettings", vec![]).await?;
         self.send(
@@ -145,7 +144,7 @@ impl Ax {
     }
 
     /// Leaves selection mode and hides the inspector's highlight.
-    pub async fn turn_off(&mut self) -> Result<(), IdeviceError> {
+    pub async fn turn_off(&mut self) -> Result<(), Error> {
         self.send("deviceInspectorSetMonitoredEventType:", vec![Arch::Int(0)])
             .await?;
         self.send("deviceInspectorFocusOnElement:", vec![Arch::Null])
@@ -162,7 +161,7 @@ impl Ax {
     }
 
     /// Moves the focus and returns the element it lands on.
-    pub async fn step(&mut self, to: Move) -> Result<Element, IdeviceError> {
+    pub async fn step(&mut self, to: Move) -> Result<Element, Error> {
         let options = Arch::passthrough(Arch::mdict([
             ("allowNonAX", Arch::passthrough(Arch::Bool(false))),
             ("direction", Arch::passthrough(Arch::Int(to as i64))),
@@ -175,13 +174,13 @@ impl Ax {
 
     /// Every element from the first, until the focus wraps around or stops
     /// moving, at most `max`.
-    pub async fn elements(&mut self, max: usize) -> Result<Vec<Element>, IdeviceError> {
+    pub async fn elements(&mut self, max: usize) -> Result<Vec<Element>, Error> {
         let mut out: Vec<Element> = Vec::new();
         let mut to = Move::First;
         while out.len() < max {
             let e = match self.step(to).await {
                 Ok(e) => e,
-                Err(IdeviceError::Timeout) if !out.is_empty() => break,
+                Err(Error::Timeout) if !out.is_empty() => break,
                 Err(e) => return Err(e),
             };
             if out.iter().any(|seen| seen.handle == e.handle) {
@@ -194,11 +193,7 @@ impl Ax {
     }
 
     /// The string value of attribute `name` ("Label", "Identifier", "Hint"…).
-    pub async fn attribute(
-        &mut self,
-        el: &Element,
-        name: &str,
-    ) -> Result<Option<String>, IdeviceError> {
+    pub async fn attribute(&mut self, el: &Element, name: &str) -> Result<Option<String>, Error> {
         let attr = Arch::typed(
             "AXAuditElementAttribute_v1",
             Arch::passthrough(Arch::mdict([(
@@ -222,7 +217,7 @@ impl Ax {
     /// Performs the element's default action (AXAction-2010, "Activate"), what
     /// a VoiceOver double tap does. An element that is only static text inside
     /// a tappable cell accepts this and does nothing.
-    pub async fn activate(&mut self, el: &Element) -> Result<(), IdeviceError> {
+    pub async fn activate(&mut self, el: &Element) -> Result<(), Error> {
         let flag = |b| Arch::passthrough(Arch::Bool(b));
         let attr = Arch::typed(
             "AXAuditElementAttribute_v1",
@@ -252,77 +247,36 @@ impl Ax {
     }
 
     /// Waits for the next focus report.
-    async fn focus(&mut self, timeout: Duration) -> Result<Element, IdeviceError> {
-        let msg = match self
+    async fn focus(&mut self, timeout: Duration) -> Result<Element, Error> {
+        let msg = self
+            .dtx
+            .wait_call(timeout, |m| m.selector() == Some(FOCUS_CHANGED))
+            .await?;
+        // Other device calls (monitored events, settings changes) are not used;
+        // drop them so the queue stays small.
+        self.dtx
             .incoming
-            .iter()
-            .position(|m| selector(m) == Some(FOCUS_CHANGED))
-        {
-            Some(i) => self.incoming.remove(i).unwrap(),
-            None => loop {
-                let m = self.read(timeout).await?;
-                if selector(&m) == Some(FOCUS_CHANGED) {
-                    break m;
-                }
-                if selector(&m).is_some() {
-                    self.incoming.push_back(m);
-                }
-            },
-        };
-        let payload =
-            first_archived_arg(&msg).ok_or_else(|| bad("focus report without an element"))?;
+            .retain(|m| m.selector() == Some(FOCUS_CHANGED));
+        let payload = msg
+            .args()
+            .next()
+            .ok_or_else(|| bad("focus report without an element"))?;
         parse_focus(&payload).ok_or_else(|| bad("focus report in an unknown shape"))
     }
 
     /// Calls `sel` without waiting.
-    async fn send(&mut self, sel: &str, args: Vec<Arch>) -> Result<(), IdeviceError> {
-        self.rs
-            .call_method(0, Some(sel), Some(aux(args)), false)
-            .await
+    async fn send(&mut self, sel: &str, args: Vec<Arch>) -> Result<(), Error> {
+        self.dtx.send(0, sel, &args).await
     }
 
     /// Calls `sel` and returns its reply's payload.
-    async fn call(&mut self, sel: &str, args: Vec<Arch>) -> Result<Option<Value>, IdeviceError> {
-        self.rs
-            .call_method(0, Some(sel), Some(aux(args)), true)
-            .await?;
-        loop {
-            let m = self.read(REPLY_TIMEOUT).await?;
-            // A reply carries a result, never a selector; anything with a
-            // selector is the device calling us.
-            if selector(&m).is_some() {
-                self.incoming.push_back(m);
-                continue;
-            }
-            return Ok(m.data);
-        }
-    }
-
-    async fn read(&mut self, timeout: Duration) -> Result<Message, IdeviceError> {
-        tokio::time::timeout(timeout, self.rs.read_message(0))
-            .await
-            .map_err(|_| IdeviceError::Timeout)?
+    async fn call(&mut self, sel: &str, args: Vec<Arch>) -> Result<Option<Value>, Error> {
+        self.dtx.call(0, sel, &args).await
     }
 }
 
-fn aux(args: Vec<Arch>) -> Vec<AuxValue> {
-    args.iter().map(|a| AuxValue::Array(archive(a))).collect()
-}
-
-fn bad(what: &str) -> IdeviceError {
-    IdeviceError::UnexpectedResponse(what.into())
-}
-
-/// The selector of a device-to-host call.
-fn selector(m: &Message) -> Option<&str> {
-    m.data.as_ref()?.as_string().filter(|s| s.ends_with(':'))
-}
-
-fn first_archived_arg(m: &Message) -> Option<Value> {
-    m.aux.as_ref()?.values.iter().find_map(|v| match v {
-        AuxValue::Array(bytes) => unarchive(bytes),
-        _ => None,
-    })
+fn bad(what: &str) -> Error {
+    Error::Protocol(what.into())
 }
 
 fn element_arg(el: &Element) -> Arch {
@@ -389,6 +343,7 @@ fn attribute_names(v: &Value, out: &mut Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::archive::{archive, unarchive};
 
     /// The shape of a focus report as recorded from an iPhone 11 on iOS 18.5
     /// (go-ios's decoder, the same NSKeyedArchive), trimmed to two attributes.
