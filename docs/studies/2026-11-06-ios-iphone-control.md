@@ -191,6 +191,23 @@ iPhone 18 Pro 시뮬레이터, iOS 27.0, Appium WDA 16.15.3 시뮬레이터 빌�
 - `ui` 한 번(전체 소스 조회)에 약 3.4초 걸렸다. 홈 화면 기준.
 - WDA JSON 소스는 `isVisible`, `isEnabled`를 `"1"`/`"0"` 문자열로 준다.
 
+## 결과 (Windows 호스트, 기기 없이, 2026-11-07)
+
+Windows 11, iPhone 없음.
+
+- 워크스페이스 전체가 경고 없이 빌드되고, 테스트와 `mobax-ios` clippy(`-D warnings`)를 통과했다.
+- usbmuxd 자리에는 Apple Mobile Device Service(TCP 27015)가 있어야 한다.
+  - Microsoft Store의 Apple Devices 앱은 Windows 서비스를 만들지 않는다. 로그인할 때 시작 작업(`AppleMobileDeviceLauncher.exe`)이 `AppleMobileDeviceProcess.exe`를 띄운다.
+  - 설치 직후에는 떠 있지 않다. 앱을 한 번 실행하면 27015가 열린다.
+  - 열린 뒤 `list`는 빈 목록을 내고, `info`는 "no iPhone attached"로 끝났다.
+- 가짜 usbmuxd(기기 하나를 보고하고 연결은 거부)로 기기 이후 경로를 확인했다.
+  - `list`는 기기를 보여 준다.
+  - `info`는 페어링 기록이 없다는 오류로, `ui`는 WDA 8100 연결 거부로 끝난다. 크래시는 없다.
+  - `mcp`가 뜨고 도구 12개를 보고한다. 안내문과 도구 목록을 합쳐 약 890토큰이다. 실패한 도구 호출은 `isError`로 답한다.
+- 고친 것: 기기 목록 조회(`UsbmuxdConnection::default()`)가 `USBMUXD_SOCKET_ADDRESS`를 무시해서, 기기 서비스 연결과 다른 주소로 붙었다. 이제 둘 다 같은 주소를 쓴다. 서비스가 없을 때 오류에 Apple Devices 앱 안내를 붙였다.
+- Android 회귀(`↕ moved` 집계, SDK 36 에뮬레이터, 3회): s1–s5 모두 성공, 호출 18회로 같다. 토큰은 3377에서 3290이 됐고, 차이는 대부분 s3(1330 → 1201)에서 났다.
+- Windows에서 WDA 서명은 하지 않는다. `scripts/ios-wda-*.sh`는 `codesign`을 쓰는 Mac 전용이다. Mac에서 서명한 WDA를 `install`로 설치한다.
+
 ## 다음 (iPhone이 연결되면)
 
 1. `mobax-ios ddi mount` → `see`. iOS 18.5에서 Xcode의 개인화 DDI가 붙는지 본다.

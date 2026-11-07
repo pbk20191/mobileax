@@ -94,7 +94,7 @@ async fn run(
             Ok(devs) => devs
                 .iter()
                 .for_each(|d| println!("{}\tiphone\t{:?}", d.udid, d.connection_type)),
-            Err(e) => eprintln!("usbmuxd: {e}"),
+            Err(e) => eprintln!("{e}"),
         }
         for (u, name, runtime) in sim::booted().unwrap_or_default() {
             println!("{u}\tsimulator\t{name} ({runtime})");

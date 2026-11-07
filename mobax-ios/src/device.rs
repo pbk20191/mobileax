@@ -1,8 +1,9 @@
 //! Finding the iPhone through usbmuxd and opening lockdown services on it.
 //!
 //! usbmuxd is the daemon on macOS and Linux, and Apple Mobile Device Service
-//! (TCP 27015, installed with iTunes) on Windows; idevice picks the right one,
-//! and `USBMUXD_SOCKET_ADDRESS` overrides it. Everything here goes through
+//! (TCP 27015) on Windows: a service with iTunes, a startup task of the
+//! Microsoft Store Apple Devices app. `USBMUXD_SOCKET_ADDRESS` overrides
+//! the address. Everything here goes through
 //! lockdown, so no iOS 17 tunnel (and no admin rights) is needed.
 
 use idevice::{
@@ -14,15 +15,31 @@ use idevice::{
 
 const LABEL: &str = "mobax-ios";
 
-pub async fn list() -> Result<Vec<UsbmuxdDevice>, IdeviceError> {
-    UsbmuxdConnection::default().await?.get_devices().await
+pub async fn list() -> Result<Vec<UsbmuxdDevice>, String> {
+    mux()
+        .await?
+        .get_devices()
+        .await
+        .map_err(|e| format!("usbmuxd: {e}"))
+}
+
+/// A usbmuxd connection at `USBMUXD_SOCKET_ADDRESS`, else the platform's
+/// default (`UsbmuxdConnection::default()` ignores the variable).
+async fn mux() -> Result<UsbmuxdConnection, String> {
+    let addr = UsbmuxdAddr::from_env_var().map_err(|e| format!("USBMUXD_SOCKET_ADDRESS: {e}"))?;
+    addr.connect(0).await.map_err(|e| {
+        let hint = if cfg!(windows) {
+            " (is Apple Mobile Device Service running? It comes with the Apple Devices app or iTunes)"
+        } else {
+            ""
+        };
+        format!("usbmuxd: {e}{hint}")
+    })
 }
 
 /// The device with `udid`, or the only one attached.
 pub async fn provider(udid: Option<&str>) -> Result<UsbmuxdProvider, String> {
-    let mut mux = UsbmuxdConnection::default()
-        .await
-        .map_err(|e| format!("usbmuxd: {e}"))?;
+    let mut mux = mux().await?;
     let dev = match udid {
         Some(u) => mux.get_device(u).await.map_err(|e| format!("{u}: {e}"))?,
         None => {
